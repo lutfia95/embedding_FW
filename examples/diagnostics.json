@@ -1,0 +1,8 @@
+{
+  "source_job_id": "replace-with-a-successful-import-or-comparison-job-id",
+  "representation": "mean",
+  "layer": null,
+  "sample_pairs": 10000,
+  "hubness_k": 10,
+  "seed": 42
+}

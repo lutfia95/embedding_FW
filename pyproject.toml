@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "plms-framework"
+version = "0.1.0"
+description = "Capability-driven API for protein language model embeddings and comparisons"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [{name = "PLMs Framework contributors"}]
+dependencies = []
+
+[project.optional-dependencies]
+api = ["fastapi>=0.115", "uvicorn[standard]>=0.34", "python-multipart>=0.0.20"]
+hf = ["torch>=2.2", "transformers>=4.48", "sentencepiece>=0.2"]
+esmc = ["torch>=2.2", "esm>=3.2"]
+visual = ["numpy>=2.0", "scipy>=1.14", "plotly>=6.0", "umap-learn>=0.5.7"]
+all = [
+  "fastapi>=0.115", "uvicorn[standard]>=0.34", "python-multipart>=0.0.20",
+  "torch>=2.2", "transformers>=4.48", "sentencepiece>=0.2", "esm>=3.2",
+  "numpy>=2.0", "scipy>=1.14", "plotly>=6.0", "umap-learn>=0.5.7"
+]
+dev = ["pytest>=8.3", "httpx>=0.28", "ruff>=0.9", "mypy>=1.14"]
+
+[project.scripts]
+plms-framework = "plms_framework.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/plms_framework"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["model: tests that may download real model checkpoints"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+

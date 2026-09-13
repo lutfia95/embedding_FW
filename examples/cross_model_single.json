@@ -1,0 +1,13 @@
+{
+  "models": ["esm2-8m", "esmc-300m"],
+  "sequences": [
+    {"id": "protein", "sequence": "MKTAYIAKQRQISFVKSHFSRQ"}
+  ],
+  "representations": [{"method": "residue", "normalize": "none"}],
+  "metrics": [],
+  "cross_model": {
+    "enabled": true,
+    "methods": ["residue_cka", "residue_rsa"]
+  },
+  "visualizations": ["residue_model_agreement"]
+}

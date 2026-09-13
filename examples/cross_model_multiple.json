@@ -1,0 +1,31 @@
+{
+  "models": ["esm2-8m", "esmc-300m", "prott5-xl-uniref50"],
+  "sequences": [
+    {"id": "protein_a", "sequence": "MKTAYIAKQRQISFVKSHFSRQ"},
+    {"id": "protein_b", "sequence": "MKTAYIAKQKQISFVKSHFSRQ"},
+    {"id": "unrelated_control", "sequence": "GGGGGGGGGPGGGGGGGGGG"}
+  ],
+  "representations": [{"method": "mean", "normalize": "l2"}],
+  "metrics": ["cosine_similarity", "sequence_identity"],
+  "cross_model": {
+    "enabled": true,
+    "representation": "mean",
+    "methods": [
+      "matrix_spearman",
+      "matrix_pearson",
+      "linear_cka",
+      "neighbor_overlap",
+      "consensus_rank",
+      "pair_disagreement"
+    ],
+    "neighbor_k": [1, 2],
+    "max_disagreements": 20
+  },
+  "visualizations": [
+    "model_agreement",
+    "model_matrix_small_multiples",
+    "consensus_heatmap",
+    "model_disagreement"
+  ]
+}
+

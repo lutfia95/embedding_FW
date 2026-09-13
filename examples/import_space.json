@@ -1,0 +1,39 @@
+{
+  "space_name": "external-esm-run",
+  "source": {
+    "display_name": "External ESM experiment",
+    "family": "ESM-2",
+    "provider": "example-lab",
+    "artifact": "facebook/esm2_t33_650M_UR50D",
+    "revision": "replace-with-an-immutable-commit",
+    "license": "verify upstream terms",
+    "citation": "record the upstream model publication",
+    "one_token_per_residue": true,
+    "special_tokens": "removed before pooling",
+    "preprocess": "raw amino-acid sequence"
+  },
+  "representations": [
+    {
+      "method": "mean",
+      "layer": 33,
+      "normalization": "l2",
+      "embeddings": [
+        {
+          "sequence_id": "protein_a",
+          "values": [0.1, 0.2, -0.3],
+          "metadata": {"source_file": "protein_a.npy"}
+        },
+        {
+          "sequence_id": "protein_b",
+          "values": [0.4, -0.1, 0.2],
+          "metadata": {"source_file": "protein_b.npy"}
+        },
+        {
+          "sequence_id": "protein_c",
+          "values": [-0.2, 0.3, 0.1],
+          "metadata": {"source_file": "protein_c.npy"}
+        }
+      ]
+    }
+  ]
+}

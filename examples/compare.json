@@ -1,0 +1,29 @@
+{
+  "models": ["reference"],
+  "sequences": [
+    {"id": "protein_a", "sequence": "MKTAYIAKQRQISFVKSHFSRQ"},
+    {"id": "protein_b", "sequence": "MKTAYIAKQKQISFVKSHFSRQ"},
+    {"id": "unrelated_control", "sequence": "GGGGGGGGGPGGGGGGGGGG"}
+  ],
+  "representations": [
+    {"method": "mean", "normalize": "l2"},
+    {"method": "residue", "normalize": "none"}
+  ],
+  "metrics": [
+    "cosine_similarity",
+    "angular_distance",
+    "sequence_identity",
+    "blosum62_global",
+    "kmer_jaccard",
+    "residue_local_alignment",
+    "residue_best_match",
+    "residue_optimal_transport"
+  ],
+  "visualizations": [
+    "clustered_heatmap",
+    "distance_distribution",
+    "nearest_neighbor_graph",
+    "residue_similarity_map"
+  ]
+}
+

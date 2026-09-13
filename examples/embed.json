@@ -1,0 +1,16 @@
+{
+  "models": ["reference"],
+  "sequences": [
+    {
+      "id": "example_protein",
+      "sequence": "MKTAYIAKQRQISFVKSHFSRQ",
+      "regions": [{"name": "n_terminal", "start": 1, "end": 10}]
+    }
+  ],
+  "representations": [
+    {"method": "mean", "normalize": "l2"},
+    {"method": "residue", "normalize": "none"},
+    {"method": "region_mean", "normalize": "l2"}
+  ]
+}
+
