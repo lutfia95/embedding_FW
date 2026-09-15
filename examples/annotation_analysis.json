@@ -1,0 +1,30 @@
+{
+  "source_job_id": "replace-with-a-successful-import-comparison-or-transformation-job-id",
+  "feature": "protein_family",
+  "representation": "mean",
+  "layer": null,
+  "k": [1, 5, 10],
+  "missing_policy": "error",
+  "annotations": [
+    {
+      "sequence_id": "protein_a",
+      "categorical": {
+        "protein_family": "kinase",
+        "organism_group": "eukaryote"
+      },
+      "numerical": {
+        "length": 287
+      }
+    },
+    {
+      "sequence_id": "protein_b",
+      "categorical": {
+        "protein_family": "phosphatase",
+        "organism_group": "eukaryote"
+      },
+      "numerical": {
+        "length": 301
+      }
+    }
+  ]
+}

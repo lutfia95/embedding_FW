@@ -16,6 +16,7 @@ except ImportError as exc:  # pragma: no cover - exercised by CLI without API ex
     ) from exc
 
 from . import __version__
+from .annotations import analyze_categorical_annotations
 from .artifacts import ArtifactStore
 from .cross_model import compare_cross_model
 from .diagnostics import diagnose_embeddings
@@ -23,19 +24,24 @@ from .errors import FrameworkError, ValidationError
 from .external import build_imported_space
 from .jobs import JobManager
 from .models import (
+    AnnotationAnalysisSpec,
     CrossModelMethod,
     CrossModelSpec,
     DiagnosticSpec,
     ImportedNormalization,
     Metric,
+    MissingAnnotationPolicy,
     Normalization,
     RepresentationMethod,
+    TransformationMethod,
+    TransformationSpec,
     Visualization,
 )
 from .pipeline import Pipeline
 from .registry import default_registry
 from .sequences import parse_fasta
 from .serialization import request_from_dict
+from .transformations import transform_embeddings
 from .visualization import render_requested
 
 
@@ -174,6 +180,33 @@ class DiagnosticsInput(StrictModel):
     seed: int = 42
 
 
+class TransformationInput(StrictModel):
+    source_job_id: str = Field(min_length=1)
+    method: TransformationMethod = TransformationMethod.MEAN_CENTER
+    representation: RepresentationMethod = RepresentationMethod.MEAN
+    layer: str | int | None = None
+    fit_sequence_ids: list[str] | None = None
+    sample_pairs: int = Field(default=10_000, ge=1, le=100_000)
+    hubness_k: int = Field(default=10, ge=1)
+    seed: int = 42
+
+
+class AnnotationRecordInput(StrictModel):
+    sequence_id: str = Field(min_length=1, max_length=256)
+    categorical: dict[str, str | int | bool | None] = Field(default_factory=dict)
+    numerical: dict[str, float | None] = Field(default_factory=dict)
+
+
+class AnnotationAnalysisInput(StrictModel):
+    source_job_id: str = Field(min_length=1)
+    feature: str = Field(min_length=1)
+    annotations: list[AnnotationRecordInput] = Field(min_length=1)
+    representation: RepresentationMethod = RepresentationMethod.MEAN
+    layer: str | int | None = None
+    k: list[Annotated[int, Field(gt=0)]] = Field(default_factory=lambda: [1, 5, 10])
+    missing_policy: MissingAnnotationPolicy = MissingAnnotationPolicy.ERROR
+
+
 class BenchmarkInput(StrictModel):
     request: EmbedInput
     track: str = "efficiency"
@@ -296,6 +329,108 @@ def diagnostics(body: DiagnosticsInput) -> dict:
         }
 
     return jobs.submit("diagnostics", run).public()
+
+
+@app.post("/v1/transform", status_code=202)
+def transform(body: TransformationInput) -> dict:
+    source_job = jobs.get(body.source_job_id)
+    if source_job.status != "succeeded" or source_job.result is None:
+        raise ValidationError(
+            f"Source job {body.source_job_id} is not a completed successful job",
+            context={"job_id": body.source_job_id, "status": source_job.status},
+        )
+    source_result = source_job.result
+    if not source_result.get("models"):
+        raise ValidationError(
+            "Source job does not contain model representations",
+            context={"job_id": body.source_job_id},
+        )
+    spec = TransformationSpec(
+        method=body.method,
+        representation=body.representation,
+        layer=body.layer,
+        fit_sequence_ids=tuple(body.fit_sequence_ids)
+        if body.fit_sequence_ids is not None
+        else None,
+        sample_pairs=body.sample_pairs,
+        hubness_k=body.hubness_k,
+        seed=body.seed,
+    )
+
+    def run() -> dict:
+        result = transform_embeddings(
+            source_result["models"], source_result.get("sequence_order", []), spec
+        )
+        result["source_job"] = body.source_job_id
+        result["provenance"].update(
+            {
+                "framework_version": __version__,
+                "source_job": body.source_job_id,
+                "source_provenance": source_result.get("provenance", {}),
+            }
+        )
+        return result
+
+    return jobs.submit("transformation", run, render=_render_transformation).public()
+
+
+def _render_transformation(result: dict, artifact_store: ArtifactStore, job_id: str) -> list[dict]:
+    return [
+        artifact_store.save_json(
+            job_id,
+            "transformation_parameters.json",
+            result.get("transformation_parameters", {}),
+        )
+    ]
+
+
+@app.post("/v1/annotations/analyze", status_code=202)
+def analyze_annotations(body: AnnotationAnalysisInput) -> dict:
+    source_job = jobs.get(body.source_job_id)
+    if source_job.status != "succeeded" or source_job.result is None:
+        raise ValidationError(
+            f"Source job {body.source_job_id} is not a completed successful job",
+            context={"job_id": body.source_job_id, "status": source_job.status},
+        )
+    source_result = source_job.result
+    if not source_result.get("models"):
+        raise ValidationError(
+            "Source job does not contain model representations",
+            context={"job_id": body.source_job_id},
+        )
+    spec = AnnotationAnalysisSpec(
+        feature=body.feature,
+        representation=body.representation,
+        layer=body.layer,
+        k=tuple(body.k),
+        missing_policy=body.missing_policy,
+    )
+    annotations = [item.model_dump(mode="json") for item in body.annotations]
+
+    def run() -> dict:
+        analysis = analyze_categorical_annotations(
+            source_result["models"],
+            source_result.get("sequence_order", []),
+            annotations,
+            spec,
+        )
+        return {
+            "schema_version": "1.0",
+            "source_job": body.source_job_id,
+            "sequence_order": source_result.get("sequence_order", []),
+            "annotation_analysis": analysis,
+            "requested_visualizations": [],
+            "provenance": {
+                "framework_version": __version__,
+                "operation": "categorical_annotation_analysis",
+                "source_job": body.source_job_id,
+                "annotation_spec": asdict(spec),
+                "annotations_sha256": analysis["annotations_sha256"],
+                "source_provenance": source_result.get("provenance", {}),
+            },
+        }
+
+    return jobs.submit("annotation_analysis", run).public()
 
 
 @app.post("/v1/compare", status_code=202)

@@ -1,23 +1,10 @@
 # PLMs Framework
 
-PLMs Framework is a capability-driven API and Python library for extracting,
-comparing, benchmarking, and visualizing representations from protein language
-models.
-
-Its purpose is broader than wrapping one model family. The framework provides a
-stable scientific workflow around models that differ in architecture,
-tokenization, sequence length, representation dimension, licensing, and hardware
-requirements.
-
-> **Current maturity:** early working foundation. The real ESM-2 8M adapter and
-> dependency-free reference path, model registry, pooling, sequence and embedding metrics, residue
-> alignment, optimal transport, provenance, background jobs, artifact storage,
-> API design, and tests are implemented. Other real checkpoint adapters are
-> present but require their optional dependencies, checkpoint downloads, and
-> model-level conformance validation before production claims should be made.
-
-The complete product specification is in
-[`IMPLEMENTATION_PROMPT.md`](IMPLEMENTATION_PROMPT.md).
+PLMs Framework is an API and Python library for generating, comparing,
+benchmarking, and visualizing protein language model representations. A model
+registry and adapter interface provide a consistent workflow across differences
+in architecture, tokenization, sequence length, representation dimension,
+licensing, and hardware requirements.
 
 ## Why this framework exists
 
@@ -34,7 +21,7 @@ vectors into a trustworthy protein comparison is not just a call to
 - Model aliases, revisions, precision, pooling, and preprocessing must be retained
   to reproduce a result.
 
-PLMs Framework makes these choices explicit and inspectable.
+Each choice is recorded in the request, result, or provenance manifest.
 
 ## Scientific contract
 
@@ -49,9 +36,9 @@ The framework follows five central rules:
 4. **Models are compared through relationships.** Pairwise matrices, rankings,
    neighbor overlap, biological tasks, and representational-similarity methods
    are valid cross-model objects.
-5. **Nothing important is silent.** Truncation, unavailable checkpoints,
-   approximation, partial failures, normalization, and adapter limitations are
-   explicit.
+5. **Execution conditions are reported.** Truncation policy, unavailable
+   checkpoints, approximation, partial failures, normalization, and adapter
+   limitations appear in structured output.
 
 ## Architecture
 
@@ -90,7 +77,7 @@ are imported lazily.
 
 ## Implemented features
 
-### Working now
+### Available capabilities
 
 - Capability-based registry and stable aliases
 - Explicit model availability and failure reasons
@@ -116,6 +103,10 @@ are imported lazily.
 - Strict JSON import of precomputed pooled or residue embedding spaces
 - Norm, duplicate, anisotropy, effective-dimension, distance-concentration, and
   hubness diagnostics for pooled embedding spaces
+- Immutable mean-centering jobs with explicit fit subsets, parameter checksums,
+  and before/after diagnostics
+- Categorical annotation analysis with KNN consistency, chance adjustment,
+  per-class retrieval summaries, and class-mixing matrices
 - Exact all-to-all safety threshold
 - Partial failure isolation across models
 - Atomic artifacts with SHA-256 checksums
@@ -125,7 +116,7 @@ are imported lazily.
 - FastAPI endpoint definitions and asynchronous comparison jobs
 - Dependency-free deterministic adapter for tests and demonstrations
 
-### Designed but not yet complete
+### Current limitations
 
 - Immutable upstream revision resolution after checkpoint download
 - Content-addressed embedding cache
@@ -137,8 +128,8 @@ are imported lazily.
 - Full conformance runs for every real checkpoint and hardware/precision pair
 - MSA, structure-token, multimodal, inverse-folding, causal, and antibody adapters
 
-These distinctions matter: a registry entry means an adapter is known, while
-`conformance: tested` means its numerical behavior was validated.
+A registry entry identifies an available adapter definition. The
+`conformance` field records whether its numerical behavior has been validated.
 
 ## Initial model registry
 
@@ -204,10 +195,10 @@ Large checkpoints are never downloaded during normal unit tests. Download size,
 GPU memory, model license, and gated access should be reviewed before enabling a
 real model in production.
 
-## Five-minute dependency-free example
+## Dependency-free example
 
-The built-in reference adapter exercises the complete software workflow without
-pretending to be a biological model:
+The built-in reference adapter is a deterministic software test fixture, not a
+biological PLM:
 
 ```bash
 PYTHONPATH=src python -m plms_framework.cli compare examples/compare.json
@@ -262,6 +253,8 @@ exhaust GPU memory.
 | `POST` | `/v1/embed` | Synchronous embedding request |
 | `POST` | `/v1/spaces/import` | Import one precomputed embedding space as an asynchronous job |
 | `POST` | `/v1/diagnostics` | Diagnose pooled embedding geometry from a successful job |
+| `POST` | `/v1/transform` | Create a provenance-tracked embedding transformation from a successful job |
+| `POST` | `/v1/annotations/analyze` | Measure categorical-label organization in embedding neighborhoods |
 | `POST` | `/v1/compare` | Submit asynchronous all-to-all comparison |
 | `POST` | `/v1/cross-compare` | Compare models from completed jobs without rerunning inference |
 | `POST` | `/v1/benchmark` | Submit efficiency benchmark; biological tracks require datasets |
@@ -535,6 +528,100 @@ is explicitly unavailable until an approximate-neighbor backend is implemented.
 These measurements characterize geometry, not biological performance. In
 particular, a low anisotropy or hubness score does not prove that an embedding
 captures protein function, structure, or evolutionary relationships.
+
+## Mean-centering
+
+`POST /v1/transform` creates a new embedding-space job without modifying its
+source. Mean-centering is currently available for `mean`, `max`, and `native`
+vectors:
+
+```json
+{
+  "source_job_id": "SUCCESSFUL_JOB_ID",
+  "method": "mean_center",
+  "representation": "mean",
+  "layer": null,
+  "fit_sequence_ids": ["training_a", "training_b"],
+  "sample_pairs": 10000,
+  "hubness_k": 10,
+  "seed": 42
+}
+```
+
+The fitted mean is calculated independently for each model. Every transformed
+space receives a derived identifier such as `esm2-8m::mean-centered`. The result
+contains:
+
+- The transformed vectors and their original normalization declaration
+- The IDs used to fit the mean
+- The fitted mean vector and its SHA-256 checksum
+- Geometry diagnostics before and after transformation
+- A source-to-derived model mapping
+- A warning when the mean was fitted on all available sequences
+
+The job also writes `transformation_parameters.json`. Adding the retained mean
+vector to a transformed vector reconstructs the source vector, subject to normal
+floating-point precision.
+
+For exploratory analysis, omitting `fit_sequence_ids` fits the mean on the whole
+source collection. For held-out evaluation, provide only training or reference
+IDs. Fitting on test proteins would leak information from the evaluation set
+into the transformation.
+
+The complete request is in `examples/transform_mean_center.json`. Transformation
+jobs can be supplied directly to `/v1/diagnostics` or `/v1/cross-compare`.
+
+## Categorical annotation analysis
+
+`POST /v1/annotations/analyze` measures how supplied categorical labels are
+organized within each model's embedding neighborhoods:
+
+```json
+{
+  "source_job_id": "SUCCESSFUL_JOB_ID",
+  "feature": "protein_family",
+  "representation": "mean",
+  "layer": null,
+  "k": [1, 5, 10],
+  "missing_policy": "error",
+  "annotations": [
+    {
+      "sequence_id": "protein_a",
+      "categorical": {"protein_family": "kinase"},
+      "numerical": {"length": 287}
+    },
+    {
+      "sequence_id": "protein_b",
+      "categorical": {"protein_family": "phosphatase"},
+      "numerical": {"length": 301}
+    }
+  ]
+}
+```
+
+The analysis currently uses one categorical feature and within-model cosine
+neighbors. Categorical values may be strings, integers, booleans, or null.
+Numerical annotations are accepted by the typed request schema and retained for
+future numerical-feature and confounder analyses; they do not affect the current
+calculation.
+
+For every requested valid `k`, each model reports:
+
+- Per-sequence neighbor IDs, label consistency, and same-class recall
+- Micro- and macro-averaged consistency
+- The expected same-label rate under the observed class distribution
+- Chance-adjusted consistency
+- Per-class consistency and recall
+- Class-by-class neighbor counts and row-normalized mixing fractions
+
+The response includes class sizes, dropped sequence IDs, warnings for singleton
+or small classes, and a SHA-256 digest of the labels used. `missing_policy` is
+`error` by default; set it to `drop` to analyze only labeled source sequences.
+Exact analysis is limited to 2,000 labeled sequences.
+
+These are descriptive in-sample neighborhood measurements. They do not replace
+family-aware train/test evaluation and do not establish that the labels are
+correct. The complete request is in `examples/annotation_analysis.json`.
 
 ## Multi-sequence behavior
 
@@ -824,22 +911,4 @@ HF_HOME=.model_cache PLMS_RUN_MODEL_TESTS=1 \
 
 ## Development roadmap
 
-The complete ordered backlog is maintained in [`ROADMAP.md`](ROADMAP.md). It is
-the session-to-session source of truth for planned scientific, model, scaling,
-API, security, and documentation work.
-
-The next highest-value work is:
-
-1. Add checkpoint-file checksums to the pinned ESM-2 8M provenance.
-2. Resolve and store immutable model revisions for the other adapters.
-3. Add content-addressed embedding caching and compressed binary artifacts.
-4. Validate ESM-C, ProtT5, ProtBert, and Ankh one at a time.
-5. Improve clustered heatmap ordering and add matrix CSV/NPZ exports.
-6. Add persistent workers and job cancellation.
-7. Implement explicit long-sequence window merging.
-8. Add approximate neighbor search.
-9. Introduce versioned, leakage-aware biological benchmark datasets.
-10. Expand to MSA, structure-aware, generative, historical, and specialized PLMs.
-
-Scientific validity and reproducibility take priority over a long list of model
-names that have never passed conformance tests.
+The ordered implementation backlog is maintained in [`ROADMAP.md`](ROADMAP.md).

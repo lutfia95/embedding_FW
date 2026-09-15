@@ -3,6 +3,7 @@
 __version__ = "0.1.0"
 
 from .models import (
+    AnnotationAnalysisSpec,
     CompareRequest,
     CrossModelMethod,
     CrossModelSpec,
@@ -11,11 +12,14 @@ from .models import (
     ExecutionOptions,
     ProteinSequence,
     RepresentationSpec,
+    TransformationMethod,
+    TransformationSpec,
 )
 from .pipeline import Pipeline
 from .registry import default_registry
 
 __all__ = [
+    "AnnotationAnalysisSpec",
     "CompareRequest",
     "CrossModelMethod",
     "CrossModelSpec",
@@ -25,5 +29,7 @@ __all__ = [
     "Pipeline",
     "ProteinSequence",
     "RepresentationSpec",
+    "TransformationMethod",
+    "TransformationSpec",
     "default_registry",
 ]

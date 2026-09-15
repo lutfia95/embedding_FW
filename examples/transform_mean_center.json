@@ -1,0 +1,10 @@
+{
+  "source_job_id": "replace-with-a-successful-import-or-comparison-job-id",
+  "method": "mean_center",
+  "representation": "mean",
+  "layer": null,
+  "fit_sequence_ids": ["training_a", "training_b"],
+  "sample_pairs": 10000,
+  "hubness_k": 10,
+  "seed": 42
+}

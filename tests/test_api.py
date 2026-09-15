@@ -265,6 +265,116 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(model["duplicates"]["groups"], [["a", "b"]])
         self.assertTrue(model["hubness"]["available"])
 
+    def test_mean_centering_creates_derived_job_and_parameter_artifact(self):
+        response = self.client.post(
+            "/v1/spaces/import",
+            json={
+                "space_name": "transform-source",
+                "representations": [
+                    {
+                        "method": "mean",
+                        "normalization": "none",
+                        "embeddings": [
+                            {"sequence_id": "a", "values": [1, 2]},
+                            {"sequence_id": "b", "values": [3, 4]},
+                            {"sequence_id": "c", "values": [5, 6]},
+                        ],
+                    }
+                ],
+            },
+        )
+        source_job_id = response.json()["id"]
+        for _ in range(100):
+            source = self.client.get(f"/v1/jobs/{source_job_id}").json()
+            if source["status"] not in {"running", "queued"}:
+                break
+            time.sleep(0.01)
+        self.assertEqual(source["status"], "succeeded", source)
+
+        response = self.client.post(
+            "/v1/transform",
+            json={
+                "source_job_id": source_job_id,
+                "method": "mean_center",
+                "fit_sequence_ids": ["a", "b"],
+                "hubness_k": 1,
+            },
+        )
+        self.assertEqual(response.status_code, 202, response.text)
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = self.client.get(f"/v1/jobs/{job_id}?include_result=true").json()
+            if job["status"] not in {"running", "queued"}:
+                break
+            time.sleep(0.01)
+        self.assertEqual(job["status"], "succeeded", job)
+        values = [
+            item["values"]
+            for item in job["result"]["models"]["transform-source::mean-centered"][
+                "representations"
+            ]
+        ]
+        self.assertEqual(values, [[-1.0, -1.0], [1.0, 1.0], [3.0, 3.0]])
+        self.assertIn("before", job["result"]["diagnostics"])
+        artifact_names = {
+            item["name"]
+            for item in self.client.get(f"/v1/jobs/{job_id}/artifacts").json()["artifacts"]
+        }
+        self.assertIn("transformation_parameters.json", artifact_names)
+
+    def test_categorical_annotation_analysis(self):
+        response = self.client.post(
+            "/v1/spaces/import",
+            json={
+                "space_name": "annotation-space",
+                "representations": [
+                    {
+                        "method": "mean",
+                        "embeddings": [
+                            {"sequence_id": "a1", "values": [1.0, 0.0]},
+                            {"sequence_id": "a2", "values": [0.9, 0.1]},
+                            {"sequence_id": "b1", "values": [-1.0, 0.0]},
+                            {"sequence_id": "b2", "values": [-0.9, -0.1]},
+                        ],
+                    }
+                ],
+            },
+        )
+        source_job_id = response.json()["id"]
+        for _ in range(100):
+            source = self.client.get(f"/v1/jobs/{source_job_id}").json()
+            if source["status"] not in {"running", "queued"}:
+                break
+            time.sleep(0.01)
+        self.assertEqual(source["status"], "succeeded", source)
+
+        response = self.client.post(
+            "/v1/annotations/analyze",
+            json={
+                "source_job_id": source_job_id,
+                "feature": "family",
+                "k": [1],
+                "annotations": [
+                    {
+                        "sequence_id": sequence_id,
+                        "categorical": {"family": sequence_id[0].upper()},
+                    }
+                    for sequence_id in ("a1", "a2", "b1", "b2")
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 202, response.text)
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = self.client.get(f"/v1/jobs/{job_id}?include_result=true").json()
+            if job["status"] not in {"running", "queued"}:
+                break
+            time.sleep(0.01)
+        self.assertEqual(job["status"], "succeeded", job)
+        scores = job["result"]["annotation_analysis"]["models"]["annotation-space"]["by_k"]["1"]
+        self.assertEqual(scores["micro_consistency"], 1.0)
+        self.assertEqual(scores["class_mixing"]["counts"], [[2, 0], [0, 2]])
+
 
 if __name__ == "__main__":
     unittest.main()

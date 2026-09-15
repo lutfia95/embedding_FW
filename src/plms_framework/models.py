@@ -31,6 +31,15 @@ class ImportedNormalization(StrEnum):
     CUSTOM = "custom"
 
 
+class TransformationMethod(StrEnum):
+    MEAN_CENTER = "mean_center"
+
+
+class MissingAnnotationPolicy(StrEnum):
+    ERROR = "error"
+    DROP = "drop"
+
+
 class Metric(StrEnum):
     COSINE_SIMILARITY = "cosine_similarity"
     COSINE_DISTANCE = "cosine_distance"
@@ -131,6 +140,27 @@ class DiagnosticSpec:
     hubness_k: int = 10
     seed: int = 42
     max_exact_hubness_sequences: int = 2_000
+
+
+@dataclass(frozen=True)
+class TransformationSpec:
+    method: TransformationMethod = TransformationMethod.MEAN_CENTER
+    representation: RepresentationMethod = RepresentationMethod.MEAN
+    layer: str | int | None = None
+    fit_sequence_ids: tuple[str, ...] | None = None
+    sample_pairs: int = 10_000
+    hubness_k: int = 10
+    seed: int = 42
+
+
+@dataclass(frozen=True)
+class AnnotationAnalysisSpec:
+    feature: str = ""
+    representation: RepresentationMethod = RepresentationMethod.MEAN
+    layer: str | int | None = None
+    k: tuple[int, ...] = (1, 5, 10)
+    missing_policy: MissingAnnotationPolicy = MissingAnnotationPolicy.ERROR
+    max_exact_sequences: int = 2_000
 
 
 @dataclass(frozen=True)

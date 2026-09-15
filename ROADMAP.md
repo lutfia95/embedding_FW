@@ -1,8 +1,6 @@
 # PLMs Framework — Master TODO
 
-This is the ordered implementation backlog for turning the current early
-foundation into a scientifically rigorous, extensible, and production-ready PLM
-comparison platform.
+This is the ordered implementation backlog for the PLM comparison platform.
 
 Checkbox meanings:
 
@@ -77,43 +75,43 @@ validation, documentation, examples, and tests agree.
 - [ ] Isolated-point detection
 - [x] Diagnostic pair subsampling with fixed seed
 - [ ] Confidence intervals for sampled diagnostics
-- [ ] Compare diagnostics before and after a transformation
+- [x] Compare diagnostics before and after a transformation
 - [x] Machine-readable diagnostic warnings
 - [ ] Diagnostic visualizations and a summary panel
 
 ## 3. Explicit embedding transformations — P0
 
-- [ ] Mean-centering transformation
+- [x] Mean-centering transformation
 - [ ] Feature standardization transformation
 - [ ] Whitening transformation with regularization
 - [ ] Principal-component removal as an experimental method
 - [ ] Unit-length normalization as a named pipeline stage
-- [ ] Fit transformations only on declared reference/training partitions
-- [ ] Prevent accidental data leakage into benchmark test partitions
-- [ ] Reversible transformation records when mathematically possible
-- [ ] Transformation parameter artifacts
+- [~] Fit transformations on declared reference/training partitions (explicit fit subsets supported; benchmark partition enforcement pending)
+- [~] Prevent accidental data leakage into benchmark test partitions (all-sequence fit warning implemented; benchmark enforcement pending)
+- [x] Reversible transformation records when mathematically possible
+- [x] Transformation parameter artifacts
 - [ ] Cache invalidation after transformations
-- [ ] Distinguish source normalization from framework-applied normalization
-- [ ] Require explicit opt-in; never silently alter imported vectors
+- [x] Distinguish source normalization from framework-applied normalization
+- [x] Require explicit opt-in; never silently alter imported vectors
 
 ## 4. Annotation-aware analysis — P0
 
-- [ ] Typed categorical and numerical annotation schema
-- [ ] Missing-value policy per annotation
-- [ ] Class-size and imbalance report
-- [ ] KNN label-consistency score per sample
-- [ ] Macro- and micro-averaged KNN consistency
-- [ ] Chance-adjusted KNN consistency
-- [ ] Per-class KNN performance
-- [ ] Class-mixing matrices
+- [~] Typed categorical and numerical annotation schema (both typed; categorical analysis implemented, numerical analysis pending)
+- [x] Missing-value policy per annotation
+- [x] Class-size and imbalance report
+- [x] KNN label-consistency score per sample
+- [x] Macro- and micro-averaged KNN consistency
+- [x] Chance-adjusted KNN consistency
+- [x] Per-class KNN performance
+- [x] Class-mixing matrices
 - [ ] Within-class versus between-class distance distributions
-- [ ] Retrieval precision@k, recall@k, MAP, and NDCG
+- [~] Retrieval precision@k, recall@k, MAP, and NDCG (precision and recall implemented; MAP and NDCG pending)
 - [ ] One-versus-rest neighborhood enrichment
 - [ ] Numerical-feature neighborhood smoothness
 - [ ] Multi-label annotation support
 - [ ] Hierarchical label support
 - [ ] Ontology-aware partial credit
-- [ ] Minimum-class-size warnings
+- [x] Minimum-class-size warnings
 - [ ] Annotation-aware model disagreement reports
 - [ ] Identify classes driving cross-model differences
 - [ ] Metadata-stratified cross-model agreement
