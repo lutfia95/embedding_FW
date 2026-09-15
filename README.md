@@ -75,6 +75,10 @@ The core package has no mandatory third-party dependency. Real neural models,
 the web API, and advanced visualizations are optional installation profiles and
 are imported lazily.
 
+For direct use from notebooks and Python applications, including complete
+option tables and typed examples, see
+[`doc/PYTHON_USAGE.md`](doc/PYTHON_USAGE.md).
+
 ## Implemented features
 
 ### Available capabilities
