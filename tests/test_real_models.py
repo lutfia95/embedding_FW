@@ -44,5 +44,37 @@ class RealModelTests(unittest.TestCase):
             self.assertAlmostEqual(batched_value, alone_value, places=5)
 
 
+@unittest.skipUnless(
+    os.environ.get("PLMS_RUN_ESMC_TESTS") == "1",
+    "Set PLMS_RUN_ESMC_TESTS=1 to run the ESM-C checkpoint test",
+)
+class RealESMCTests(unittest.TestCase):
+    def test_esmc_300m_cpu_shapes(self):
+        request = request_from_dict(
+            {
+                "models": ["esmc-300m"],
+                "sequences": [{"id": "a", "sequence": "MKTAYI"}],
+                "representations": [
+                    {"method": "mean", "normalize": "none"},
+                    {"method": "residue", "normalize": "none"},
+                ],
+                "execution": {
+                    "device": "cpu",
+                    "precision": "float32",
+                    "allow_partial": False,
+                },
+            },
+            compare=False,
+        )
+        result = Pipeline().embed(request)
+        output = result["models"]["esmc-300m"]
+        mean = next(item for item in output["representations"] if item["method"] == "mean")
+        residue = next(
+            item for item in output["representations"] if item["method"] == "residue"
+        )
+        self.assertEqual(mean["shape"], (960,))
+        self.assertEqual(residue["shape"], (6, 960))
+
+
 if __name__ == "__main__":
     unittest.main()

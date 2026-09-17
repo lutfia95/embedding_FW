@@ -4,7 +4,23 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 
 from ..errors import CapabilityError, ResourceLimitError
-from ..models import Availability, ModelManifest, ProteinSequence, RawEmbedding, RepresentationSpec
+from ..models import (
+    Availability,
+    ExecutionOptions,
+    ModelManifest,
+    ProteinSequence,
+    RawEmbedding,
+    RepresentationSpec,
+)
+
+
+_PRECISION_ALIASES = {
+    "float16": "float16",
+    "fp16": "float16",
+    "bfloat16": "bfloat16",
+    "bf16": "bfloat16",
+    "float32": "float32",
+}
 
 
 class ModelAdapter(ABC):
@@ -24,9 +40,17 @@ class ModelAdapter(ABC):
                     f"{self.manifest.id} does not support representation {spec.method}",
                     context={"model": self.manifest.id, "representation": str(spec.method)},
                 )
-            if (
-                isinstance(spec.layer, int)
-                and self.manifest.num_layers is not None
+            if isinstance(spec.layer, bool) or not isinstance(spec.layer, (str, int)):
+                raise CapabilityError(
+                    f"Layer must be 'model_default' or an integer for {self.manifest.id}"
+                )
+            if isinstance(spec.layer, str) and spec.layer != "model_default":
+                raise CapabilityError(
+                    f"String layer {spec.layer!r} is invalid for {self.manifest.id}; "
+                    "use 'model_default' or an integer"
+                )
+            if isinstance(spec.layer, int) and (
+                self.manifest.num_layers is not None
                 and not 0 <= spec.layer <= self.manifest.num_layers
             ):
                 raise CapabilityError(f"Layer {spec.layer} is invalid for {self.manifest.id}")
@@ -39,6 +63,29 @@ class ModelAdapter(ABC):
                     f"Sequences exceed native length {self.manifest.max_native_length}; truncation is forbidden",
                     context={"model": self.manifest.id, "sequence_ids": too_long},
                 )
+
+    def validate_execution(self, execution: ExecutionOptions) -> None:
+        if execution.device != "auto" and execution.device not in self.manifest.devices:
+            raise CapabilityError(
+                f"{self.manifest.id} does not advertise device {execution.device!r}",
+                context={
+                    "model": self.manifest.id,
+                    "device": execution.device,
+                    "supported_devices": list(self.manifest.devices),
+                },
+            )
+        if execution.precision == "auto":
+            return
+        precision = _PRECISION_ALIASES[execution.precision]
+        if precision not in self.manifest.precisions:
+            raise CapabilityError(
+                f"{self.manifest.id} does not advertise precision {execution.precision!r}",
+                context={
+                    "model": self.manifest.id,
+                    "precision": execution.precision,
+                    "supported_precisions": list(self.manifest.precisions),
+                },
+            )
 
     def load(self, *, device: str = "auto", precision: str = "auto") -> None:
         return None

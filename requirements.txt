@@ -1,0 +1,8 @@
+# Complete runtime installation for PLMs Framework.
+#
+# Run from the repository root with Python 3.12 or newer:
+#   python -m pip install -r requirements.txt
+#
+# Dependency versions remain defined once, in pyproject.toml. The `all` extra
+# installs the API, Hugging Face models, ESM-C, and visualization backends.
+.[all]

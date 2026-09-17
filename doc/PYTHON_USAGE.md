@@ -15,7 +15,10 @@ embeddings, FASTA parsing, and visualization rendering.
 - [Choose between Python and the API](#choose-between-python-and-the-api)
 - [Quick start](#quick-start)
 - [Dictionary requests and typed requests](#dictionary-requests-and-typed-requests)
+- [Complete request option reference](#complete-request-option-reference)
 - [Discovering models](#discovering-models)
+- [Model and backend guide](#model-and-backend-guide)
+- [ESM-C setup and troubleshooting](#esm-c-setup-and-troubleshooting)
 - [Sequence options](#sequence-options)
 - [Representation options](#representation-options)
 - [Execution options](#execution-options)
@@ -34,8 +37,25 @@ embeddings, FASTA parsing, and visualization rendering.
 
 ## Installation
 
-Python 3.11 or newer is required. From the repository root, install the package
-in editable mode:
+The core library requires Python 3.11 or newer. The complete installation,
+including ESM-C, requires Python 3.12 or newer. From the repository root, the
+recommended one-file installation is:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+`requirements.txt` installs the package and its `all` runtime profile: the API,
+Hugging Face models, ESM-C, and advanced visualizations. It refers back to
+`pyproject.toml`, which remains the single source of dependency versions. Model
+weights are not installed eagerly; each checkpoint is downloaded when that
+model is first loaded.
+
+For a smaller editable installation on Python 3.11 or newer, install only the
+core package:
 
 ```bash
 python -m venv .venv
@@ -45,10 +65,20 @@ python -m pip install -e .
 
 The core installation has no mandatory third-party dependencies and includes
 the deterministic reference adapter. Install the Hugging Face dependencies to
-run compatible real checkpoints:
+run ESM-2, ProtT5, ProtBert, and Ankh checkpoints:
 
 ```bash
 python -m pip install -e '.[hf]'
+```
+
+ESM-C uses Biohub's maintained `esm` implementation instead of the generic
+adapter. Its current dependency stack requires Python 3.12 or newer. Create the
+environment with a 3.12+ interpreter and install:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[esmc]'
 ```
 
 Install advanced interactive visualizations with:
@@ -57,8 +87,8 @@ Install advanced interactive visualizations with:
 python -m pip install -e '.[visual]'
 ```
 
-The API dependencies are not needed for direct Python use. Install all runtime
-features only when they are required:
+The API dependencies are not needed for direct Python use. On Python 3.12 or
+newer, install all runtime features only when they are required:
 
 ```bash
 python -m pip install -e '.[all]'
@@ -152,6 +182,30 @@ result = Pipeline().embed(request)
 The first run may download the checkpoint. Checkpoint access, local storage,
 memory, and upstream license conditions remain the caller's responsibility.
 
+For ESM-C, install the separate `esmc` extra and make failures raise while
+checking a new installation:
+
+```python
+request = request_from_dict(
+    {
+        "models": ["esmc-300m"],
+        "sequences": [{"id": "protein", "sequence": "MKTAYIAKQRQISFVKSHFSRQ"}],
+        "representations": [{"method": "mean", "normalize": "l2"}],
+        "execution": {
+            "device": "cpu",
+            "precision": "float32",
+            "allow_partial": False,
+        },
+    },
+    compare=False,
+)
+
+result = Pipeline().embed(request)
+```
+
+Use `bfloat16` on a compatible CUDA device. ESM-C does not advertise MPS or
+float16 in this framework.
+
 ## Dictionary requests and typed requests
 
 There are two equivalent ways to construct a request.
@@ -226,6 +280,55 @@ result = Pipeline().compare(request)
 Use tuples for tuple-typed fields in typed requests. The dictionary parser
 converts JSON-style lists to the required tuples automatically.
 
+## Complete request option reference
+
+`EmbeddingRequest` is the input to `embed()` and `estimate()`.
+`CompareRequest` adds comparison-only fields and is the input to `compare()`.
+The following table is the complete top-level contract:
+
+| Field | Embed/estimate | Compare | Default | Meaning |
+|---|---:|---:|---|---|
+| `models` | Yes | Yes | Required | One or more framework IDs or aliases |
+| `sequences` | Yes | Yes | Required | Protein records; at least one |
+| `representations` | Yes | Yes | One L2-normalized `mean` | Outputs to materialize for every successful model |
+| `execution` | Yes | Yes | `ExecutionOptions()` | Device, precision, failure, length, and scaling policy |
+| `metrics` | No | Yes | `cosine_similarity` | Pairwise vector, sequence, or residue calculations |
+| `visualizations` | No | Yes | Empty | Rendering instructions retained in the numerical result |
+| `cross_model` | No | Yes | Disabled | Relationship-based comparison between successful PLMs |
+
+Important interactions:
+
+- `models` selects adapters; aliases are resolved before execution and successful
+  output keys always use canonical IDs.
+- A representation is computed for every sequence and every requested model.
+  Requesting two layers causes two forward passes per model in the current
+  implementation.
+- Each method/layer combination must be unique. Normalization is not part of
+  result matrix keys, so request a method/layer only once.
+- Vector metrics require at least one of `mean`, `max`, or a supported `native`
+  representation. Residue metrics require `residue`.
+- `visualizations` do not render files in `Pipeline.compare()`; call
+  `render_requested()` afterward.
+- Sequence-only metrics do not require a model representation, but model
+  embedding still runs for the requested models.
+- Global option errors are raised before model execution. Model-specific
+  capability/load errors follow `allow_partial`.
+
+`cross_model` has these fields:
+
+| Field | Values | Default | Meaning |
+|---|---|---|---|
+| `enabled` | Boolean | `False` | Enables cross-PLM analysis |
+| `methods` | Cross-model method names | `matrix_spearman` | Analyses to run |
+| `representation` | `mean`, `max`, or supported `native` | `mean` | Pooled space used by sequence-level methods |
+| `neighbor_k` | Positive integers | `(1, 5, 10)` | Neighborhood sizes; reduced to `N - 1` when necessary |
+| `max_disagreements` | Positive integer | `20` | Maximum ranked disagreement pairs returned |
+
+All accepted representation, execution, metric, visualization, and cross-model
+method values are detailed in the corresponding sections below. There is no
+special `"all"` model selector: enumerate model IDs deliberately so a request
+cannot trigger unbounded downloads.
+
 ## Discovering models
 
 Model discovery does not load or download checkpoints:
@@ -256,25 +359,26 @@ print(canonical_id)  # reference-deterministic-v1
 
 The currently registered IDs are:
 
-| Model ID | Family | Dimension | Conformance status |
-|---|---|---:|---|
-| `reference-deterministic-v1` | Reference fixture | 16 | Tested; not a biological PLM |
-| `esm2-8m` | ESM-2 | 320 | Tested for CPU shapes, masking, and batch invariance |
-| `esm2-35m` | ESM-2 | 480 | Adapter registered; checkpoint validation required |
-| `esm2-150m` | ESM-2 | 640 | Adapter registered; checkpoint validation required |
-| `esm2-650m` | ESM-2 | 1,280 | Adapter registered; checkpoint validation required |
-| `esm2-3b` | ESM-2 | 2,560 | Adapter registered; checkpoint validation required |
-| `esm2-15b` | ESM-2 | 5,120 | Adapter registered; checkpoint validation required |
-| `esmc-300m` | ESM-C | Not declared | Generic adapter entry; access, compatibility, and validation required |
-| `esmc-600m` | ESM-C | Not declared | Generic adapter entry; access, compatibility, and validation required |
-| `esmc-6b` | ESM-C | Not declared | Generic adapter entry; access, compatibility, and validation required |
-| `prott5-xl-uniref50` | ProtTrans | 1,024 | Adapter registered; checkpoint validation required |
-| `protbert-bfd` | ProtTrans | 1,024 | Adapter registered; checkpoint validation required |
-| `ankh-base` | Ankh | 768 | Adapter registered; checkpoint validation required |
-| `ankh-large` | Ankh | 1,536 | Adapter registered; checkpoint validation required |
+| Model ID | Backend | Layers | Dimension | Native residues | Conformance status |
+|---|---|---:|---:|---:|---|
+| `reference-deterministic-v1` | Built in | 0 | 16 | Unbounded | Tested; not a biological PLM |
+| `esm2-8m` | Hugging Face | 6 | 320 | 1,022 | Tested for CPU shapes, masking, and batch invariance |
+| `esm2-35m` | Hugging Face | 12 | 480 | 1,022 | Checkpoint validation required |
+| `esm2-150m` | Hugging Face | 30 | 640 | 1,022 | Checkpoint validation required |
+| `esm2-650m` | Hugging Face | 33 | 1,280 | 1,022 | Checkpoint validation required |
+| `esm2-3b` | Hugging Face | 36 | 2,560 | 1,022 | Checkpoint validation required |
+| `esm2-15b` | Hugging Face | 48 | 5,120 | 1,022 | Checkpoint validation required |
+| `esmc-300m` | Biohub `esm` | 30 | 960 | 2,046 | Adapter implemented; checkpoint validation required |
+| `esmc-600m` | Biohub `esm` | 36 | 1,152 | 2,046 | Adapter implemented; checkpoint validation required |
+| `esmc-6b` | Biohub `esm` | 80 | 2,560 | 2,046 | Adapter implemented; checkpoint validation required |
+| `prott5-xl-uniref50` | Hugging Face | 24 | 1,024 | Not declared | Checkpoint validation required |
+| `protbert-bfd` | Hugging Face | 30 | 1,024 | Not declared | Checkpoint validation required |
+| `ankh-base` | Hugging Face | Not declared | 768 | Not declared | Checkpoint validation required |
+| `ankh-large` | Hugging Face | Not declared | 1,536 | Not declared | Checkpoint validation required |
 
-Model aliases include `reference`, upstream ESM-2 checkpoint names, and the
-ProtTrans underscore-form artifact names recorded in each manifest.
+Model aliases include `reference`, upstream ESM-2 checkpoint names, Biohub
+ESM-C forms such as `esmc_300m` and `biohub/ESMC-300M`, and the ProtTrans
+underscore-form artifact names recorded in each manifest.
 
 `adapter.availability().available` currently means that the adapter's required
 Python packages are importable. It does not prove that a checkpoint is cached,
@@ -282,9 +386,74 @@ downloadable, licensed for the intended use, compatible with the adapter, or
 small enough for the selected hardware. The manifest's `conformance` field and
 `limitations` list provide the stronger qualification.
 
-The ESM-C entries currently use the generic Hugging Face adapter path and have
-not passed model-level conformance testing. Treat them as discoverable registry
-entries, not as guaranteed runnable integrations.
+The ESM-C entries use their own Biohub adapter and never fall through to the
+generic Hugging Face loader. They have accurate layer/dimension metadata and a
+2,046-residue limit, but they have not yet passed the repository's real-model
+conformance suite. Treat the status literally.
+
+## Model and backend guide
+
+| Family | Install | Input handling | Practical notes |
+|---|---|---|---|
+| Reference | Core package | One character per residue | Deterministic software fixture only; never use as a biological model |
+| ESM-2 | `.[hf]` | Raw sequence through the checkpoint tokenizer | `esm2-8m` is the only checkpoint with a checked-in real-model conformance test |
+| ESM-C | `.[esmc]` | Biohub character tokenizer with `<cls>`/`<eos>` removed | Python 3.12+; CPU/CUDA; 2,046 residues; current adapter uses portable SDPA |
+| ProtT5 | `.[hf]` | Residues are space-separated before tokenization | Encoder output only; large checkpoint; upstream maximum is not declared in the manifest |
+| ProtBert | `.[hf]` | Residues are space-separated before tokenization | Registered but not conformance-tested here |
+| Ankh | `.[hf]` | Raw sequence; encoder side of encoder-decoder model | Non-commercial upstream license; verify terms and checkpoint behavior |
+
+`mean` is intentionally the same framework-controlled operation for every
+family: average exactly one returned vector per native residue, then apply the
+requested normalization. Model-specific classification tokens and upstream
+poolers are not substituted for it.
+
+The registry does not promise that every entry will run on one machine. It
+describes the adapter and checkpoint; dependency versions, network access,
+disk, RAM/VRAM, dtype support, and upstream terms still determine whether an
+individual run can load.
+
+## ESM-C setup and troubleshooting
+
+ESM-C has a dedicated dependency and execution path. A reliable diagnostic is:
+
+```bash
+python --version
+python -m pip show esm torch plms-framework
+python -m plms_framework.cli models
+```
+
+Then run one short sequence with `allow_partial=False`, `device="cpu"`, and
+`precision="float32"`. This makes the original exception visible instead of
+returning it inside `result["failures"]`.
+
+Common ESM-C failures:
+
+| Symptom | Cause | Action |
+|---|---|---|
+| `python_version_unsupported` | Current Biohub `esm` requires Python 3.12+ | Create a Python 3.12+ environment |
+| `dependency_missing` | `torch` or Biohub `esm` is absent | Install `pip install -e '.[esmc]'` |
+| `dependency_incompatible` | Old Biohub `esm`, or another distribution owns the `esm` module | Remove the conflict and install the declared extra; `fair-esm` is not the ESM-C backend |
+| `model_unavailable` during download | No network/cache access, insufficient disk, or upstream Hub error | Check the nested message and pre-populate the cache if running offline |
+| CUDA requested but unavailable | CPU-only PyTorch or inaccessible GPU | Use `device="cpu"` or install a matching CUDA PyTorch build |
+| Out of memory | Checkpoint, activations, batch, or hidden-state request is too large | Start with `esmc-300m`, one short sequence, pooled output, and no intermediate layer |
+| MPS or float16 capability failure | ESM-C does not advertise that execution combination here | Use CPU/float32 or compatible CUDA/bfloat16 |
+| Length error above 2,046 residues | The 2,048-token context also contains `<cls>` and `<eos>` | Shorten upstream or choose another model; framework truncation/windowing is not implemented |
+
+The adapter uses `biohub/ESMC-*` weights through `EsmcForMaskedLM`, removes
+boundary and padding tokens with tokenizer masks, and records Biohub `esm`
+version, resolved dtype, device, and attention implementation in provenance.
+Published checkpoint storage is float32, so downloads and CPU memory can be
+substantially larger than half-precision storage; the ESM-C resource estimator
+therefore uses four bytes per declared parameter. Inference can also need
+significant activation memory.
+
+An opt-in real-checkpoint shape test is included. It downloads and loads the
+300M checkpoint, so run it only in a suitable Python 3.12+ environment:
+
+```bash
+PYTHONPATH=src PLMS_RUN_ESMC_TESTS=1 \
+  python -m unittest tests.test_real_models.RealESMCTests -v
+```
 
 ## Sequence options
 
@@ -369,6 +538,21 @@ Every representation specification accepts:
 | `window_size` | Positive integer or `None` | `None` | Required for `window_mean` |
 | `window_step` | Positive integer or `None` | `None` | Defaults to `window_size` |
 
+Method-specific rules:
+
+- `mean` and `max` return one vector per sequence.
+- `residue` returns one row per canonical amino acid. With `normalize="l2"`,
+  normalization is applied independently to every row.
+- `region_mean` ignores `window_size`/`window_step` and requires at least one
+  valid region on every sequence.
+- `window_mean` ignores named regions, requires `window_size`, and starts
+  windows at residues `1, 1 + window_step, ...`. The final partial window is
+  retained; processing stops after a window reaches the sequence end.
+- `native` requires explicit model support. None of the default live-model
+  manifests currently advertises it.
+- Options irrelevant to the selected method are accepted by the dataclass but
+  have no numerical effect; omit them to keep requests unambiguous.
+
 Mean pooling excludes padding and special boundary tokens because adapters must
 first return exactly one row for each native residue. L2 normalization retains
 the original norm in `norm_before`; residue normalization retains all original
@@ -391,9 +575,15 @@ one region on every sequence being materialized.
 ### Layer selection
 
 Use `"model_default"` unless the analysis specifically concerns intermediate
-layers. For adapters with a known layer count, integer layers range from zero
-through the manifest's layer count. An integer causes compatible Hugging Face
-models to request hidden states, which uses more memory.
+layers. It selects the adapter's final representation without requesting the
+complete hidden-state stack. The only supported string is exactly
+`"model_default"`; names such as `"last"` are rejected.
+
+For adapters with a known layer count `K`, integer layers range from `0` through
+`K`. Layer `0` is the input embedding state and layer `K` is the final
+transformer output under the Hugging Face-style hidden-state convention. An
+integer asks the backend for hidden states and can substantially increase peak
+memory. The reference fixture has `K = 0`.
 
 Do not compare matrices built from different layers as if they were the same
 representation. The matrix key records both method and layer.
@@ -404,30 +594,49 @@ representation. The matrix key records both method and layer.
 
 | Option | Supported/current values | Default | Behavior |
 |---|---|---|---|
-| `device` | `auto`, `cpu`, `cuda`, `mps` | `auto` | `auto` chooses CUDA, then MPS, then CPU in the Hugging Face adapter |
-| `precision` | `auto`, `float32`, `float16`/`fp16`, `bfloat16`/`bf16` | `auto` | Half/bfloat dtypes are passed at model load; compatibility depends on hardware/model |
+| `device` | `auto`, `cpu`, `cuda`, `mps` | `auto` | Explicit values must also be advertised by every selected model |
+| `precision` | `auto`, `float32`, `float16`/`fp16`, `bfloat16`/`bf16` | `auto` | Aliases are equivalent; explicit values must be advertised by the model |
 | `all_to_all` | `exact` | `exact` | Approximate comparison is not implemented |
 | `on_long_sequence` | `error` | `error` | Windowed model inference is not implemented |
-| `allow_partial` | Boolean | `True` | Isolate model failures instead of aborting a multi-model run |
-| `max_exact_sequences` | Integer at least 2 | `2000` | Maximum sequence count accepted by exact comparison |
+| `allow_partial` | Boolean | `True` | Isolate per-model failures instead of aborting a multi-model run |
+| `max_exact_sequences` | Integer at least 2 | `2000` | Maximum sequence count accepted by `compare()`; does not limit `embed()` |
 
 The dataclass layer stores `device`, `precision`, `all_to_all`, and
-`on_long_sequence` as strings. The values listed above are the implemented
-ones. In particular, changing `all_to_all` or `on_long_sequence` to a future
-mode does not activate an approximate or chunked algorithm.
+`on_long_sequence` as strings, but the pipeline validates the implemented
+values before inference. A misspelling or future value raises `ValidationError`;
+it never silently activates, disables, or substitutes an algorithm.
+
+Backend defaults and constraints:
+
+| Backend | `device="auto"` | `precision="auto"` | Important constraint |
+|---|---|---|---|
+| Reference | CPU | Internal deterministic arithmetic | Explicit neural-model precisions are not advertised |
+| Hugging Face | CUDA, then MPS, then CPU | Checkpoint/default dtype | Runtime support still depends on the checkpoint and PyTorch device |
+| Biohub ESM-C | CUDA, otherwise CPU | bfloat16 on CUDA; float32 on CPU | Only CPU/CUDA and float32/bfloat16 are advertised |
+
+`allow_partial` applies after a model has been selected. Unknown global option
+values and invalid request-wide combinations always raise. With partial mode,
+a model-specific unsupported device, precision, layer, length, dependency, or
+load problem is recorded and the next model is attempted. If every model fails,
+the method can return `models={}` with a non-empty `failures` list; callers must
+check it.
 
 Example:
 
 ```python
 "execution": {
-    "device": "cuda",
-    "precision": "float16",
+    "device": "auto",
+    "precision": "auto",
     "all_to_all": "exact",
     "on_long_sequence": "error",
     "allow_partial": True,
     "max_exact_sequences": 1000,
 }
 ```
+
+Set explicit hardware/dtype values only after inspecting the selected model's
+`devices` and `precisions` manifest fields. For example, CUDA/float16 is an
+advertised Hugging Face combination, whereas ESM-C advertises CUDA/bfloat16.
 
 ## Embedding
 
@@ -491,11 +700,11 @@ Vector metrics apply to `mean`, `max`, or supported `native` vectors:
 
 | Metric | Direction | Definition/use |
 |---|---|---|
-| `cosine_similarity` | Higher is closer | Scale-invariant angular similarity |
-| `cosine_distance` | Lower is closer | `1 - cosine_similarity` |
-| `angular_distance` | Lower is closer | `acos(cosine) / pi` |
-| `correlation_distance` | Lower is closer | Cosine distance after centering each vector's features |
-| `euclidean_distance` | Lower is closer | Scale-sensitive L2 distance |
+| `cosine_similarity` | Higher is closer | Dot product divided by norms; clamped to `[-1, 1]`; a zero vector has similarity `0` |
+| `cosine_distance` | Lower is closer | `1 - cosine_similarity`; range `[0, 2]` |
+| `angular_distance` | Lower is closer | `acos(cosine) / pi`; range `[0, 1]` |
+| `correlation_distance` | Lower is closer | Cosine distance after subtracting each vector's feature mean; a constant centered vector follows the zero-vector convention |
+| `euclidean_distance` | Lower is closer | Scale-sensitive L2 distance; no bounded range |
 
 For L2-normalized vectors, cosine and Euclidean distance encode the same pairwise
 ordering. Request both only when their different numerical scales help a
@@ -508,11 +717,15 @@ Sequence metrics use the amino-acid strings and are reported once under
 
 | Metric | Direction | Current definition |
 |---|---|---|
-| `length_ratio` | Higher is closer | Shorter length divided by longer length |
-| `sequence_identity` | Higher is closer | Global Needleman-Wunsch identity |
-| `kmer_jaccard` | Higher is closer | Jaccard similarity of unique 3-mers |
-| `blosum62_global` | Higher is closer | Normalized global BLOSUM62 score |
-| `blosum62_local` | Higher is closer | Normalized local BLOSUM62 score |
+| `length_ratio` | Higher is closer | Shorter length divided by longer length; range `(0, 1]` for accepted non-empty sequences |
+| `sequence_identity` | Higher is closer | Global Needleman-Wunsch; match `+1`, mismatch `-1`, linear gap `-1`; matches divided by alignment columns |
+| `kmer_jaccard` | Higher is closer | Jaccard similarity of sets of unique 3-mers; `k` is fixed at 3 in requests |
+| `blosum62_global` | Higher is closer | Global BLOSUM62, linear gap `-4`, divided by geometric mean of self scores |
+| `blosum62_local` | Higher is closer | Local Smith-Waterman BLOSUM62 with linear gap `-4`, normalized by self scores |
+
+The BLOSUM table has explicit `B`, `Z`, and `X` entries. `J`, `U`, and `O` are
+mapped symmetrically to `X` for these two metrics; model tokenization remains
+unchanged.
 
 ### Supported residue metrics
 
@@ -520,14 +733,21 @@ These require `{"method": "residue"}` in the same request:
 
 | Metric | Result |
 |---|---|
-| `residue_global_alignment` | Global alignment over residue cosine scores |
-| `residue_local_alignment` | Local alignment over residue cosine scores |
-| `residue_best_match` | Mean bidirectional best-residue similarity |
-| `residue_optimal_transport` | Balanced entropy-regularized Sinkhorn similarity |
+| `residue_global_alignment` | Global alignment over residue cosine scores; fixed linear gap `-0.5` |
+| `residue_local_alignment` | Smith-Waterman-style local alignment over residue cosine scores; fixed linear gap `-0.5` |
+| `residue_best_match` | Average of left-to-right and right-to-left mean best-residue cosine similarities |
+| `residue_optimal_transport` | Balanced entropy-regularized Sinkhorn similarity; uniform residue mass, epsilon `0.1`, 100 iterations |
 
 Residue work can be much larger than pooled-vector comparison. Comparing
 proteins of lengths `L1` and `L2` constructs an `L1 x L2` residue-similarity
 matrix for that pair.
+
+Alignment results include the raw score, score divided by path length, mean
+matched cosine, gap penalty, and a 1-based path using `None` for gaps. Optimal
+transport returns similarity, cost, transported mass, epsilon, iteration count,
+and method name. These algorithm parameters are currently fixed rather than
+request options. Request exactly one `residue` method/layer when using residue
+metrics, because `residue_pairs` has no layer axis.
 
 ### Complete comparison example
 
@@ -686,6 +906,8 @@ dimensions may differ between models.
 - `mean`, `max`, or supported `native` may be used for sequence-level methods.
 - The cross-model representation must also appear in `representations`.
 - Residue CKA/RSA requires `residue` in `representations`.
+- Sequence-level methods require exactly one requested layer of the selected
+  pooled method; residue methods require exactly one requested residue layer.
 - The output always retains the guardrail that raw cross-PLM vectors were not
   directly compared.
 
@@ -860,6 +1082,26 @@ features, and 5,000,000 total scalar values. They can be made more restrictive
 or deliberately increased with `max_records`, `max_dimension`, and
 `max_scalar_values`.
 
+Complete `build_imported_space()` arguments:
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `space_name` | Required | 1-128 safe characters: letters, digits, `.`, `_`, `:`, `-`; first character alphanumeric |
+| `representations` | Required | Non-empty imported representation list |
+| `source` | `None` | Caller-declared provenance fields; recorded but not verified |
+| `max_records` | `10_000` | Per-representation record limit |
+| `max_dimension` | `32_768` | Maximum feature width |
+| `max_scalar_values` | `5_000_000` | Limit across all supplied vectors/matrices |
+
+Each representation accepts `method` (default `mean`), `layer` (default
+`external`), `normalization` (default `unknown`), and a required `embeddings`
+list. Each embedding requires `sequence_id` and `values`, with optional
+`metadata`. A method/layer pair must be unique.
+
+Recognized `source` fields are `display_name`, `family`, `provider`, `artifact`,
+`revision`, `license`, `citation`, `architecture`, `tokenizer_convention`,
+`one_token_per_residue`, `special_tokens`, `parameters`, and `preprocess`.
+
 Imported metadata is provenance, not verification. The framework validates the
 structure of the values but does not prove that they came from the stated
 checkpoint.
@@ -992,6 +1234,16 @@ transformation is `mean_center`. `fit_sequence_ids=None` fits on all sequences.
 For held-out evaluation, explicitly provide only training/reference IDs to
 avoid leakage.
 
+| Option | Default | Meaning |
+|---|---|---|
+| `method` | `mean_center` | Transformation; currently the only value |
+| `representation` | `mean` | `mean`, `max`, or supported `native` source vectors |
+| `layer` | `None` | Exact layer, or first complete matching layer with a warning |
+| `fit_sequence_ids` | `None` | Unique fitting subset; `None` means all source IDs |
+| `sample_pairs` | `10_000` | Pair sample used for before/after diagnostics |
+| `hubness_k` | `10` | Neighborhood size used for diagnostics |
+| `seed` | `42` | Reproducible diagnostic pair-sampling seed |
+
 The result records the fitted mean, fitting IDs, parameter checksum, source to
 derived model mapping, and geometry diagnostics before and after centering. A
 derived model ID ends with `::mean-centered`.
@@ -1068,6 +1320,11 @@ except FrameworkError as exc:
 | `ModelUnavailableError` | `model_unavailable` | Checkpoint download/load or backend compatibility failed |
 | `ResourceLimitError` | `resource_limit` | Length or exact-comparison limit exceeded |
 
+Unexpected third-party exceptions are converted to a per-model failure with
+code `unexpected_model_failure` only when partial mode is enabled. If strict
+mode is enabled, the original exception is raised. Backend adapters wrap known
+checkpoint/dependency problems in the structured exceptions above.
+
 With `allow_partial=True`, failures from one requested model are placed in
 `result["failures"]` while other models continue:
 
@@ -1078,7 +1335,9 @@ for failure in result["failures"]:
 
 With `allow_partial=False`, the first model failure is raised immediately. Use
 the latter for strict batch pipelines where any missing model invalidates the
-whole run.
+whole run and while diagnosing a new backend. Invalid request-wide execution
+values are raised before partial handling. A partial run can legitimately have
+an empty `models` mapping when every requested model failed.
 
 ## Custom registries
 

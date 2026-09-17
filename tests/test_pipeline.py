@@ -83,6 +83,69 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(ResourceLimitError):
             Pipeline().compare(request)
 
+    def test_unimplemented_execution_modes_are_rejected(self):
+        for option, value in (
+            ("all_to_all", "approximate"),
+            ("on_long_sequence", "window"),
+            ("device", "gpu"),
+            ("precision", "float64"),
+        ):
+            with self.subTest(option=option):
+                request = request_from_dict(
+                    {
+                        "models": ["reference"],
+                        "sequences": [{"id": "a", "sequence": "M"}],
+                        "execution": {option: value},
+                    },
+                    compare=False,
+                )
+                with self.assertRaises(ValidationError):
+                    Pipeline().embed(request)
+
+    def test_invalid_string_layer_is_a_structured_partial_failure(self):
+        request = request_from_dict(
+            {
+                "models": ["reference"],
+                "sequences": [{"id": "a", "sequence": "M"}],
+                "representations": [{"method": "mean", "layer": "last"}],
+            },
+            compare=False,
+        )
+        result = Pipeline().embed(request)
+        self.assertFalse(result["models"])
+        self.assertEqual(result["failures"][0]["code"], "unsupported_capability")
+
+    def test_duplicate_representation_key_is_rejected(self):
+        request = request_from_dict(
+            {
+                "models": ["reference"],
+                "sequences": [{"id": "a", "sequence": "M"}],
+                "representations": [
+                    {"method": "mean", "normalize": "none"},
+                    {"method": "mean", "normalize": "l2"},
+                ],
+            },
+            compare=False,
+        )
+        with self.assertRaises(ValidationError):
+            Pipeline().embed(request)
+
+    def test_result_order_and_baselines_use_canonical_input(self):
+        request = request_from_dict(
+            {
+                "models": ["reference"],
+                "sequences": [
+                    {"id": " a ", "sequence": "mk\tt"},
+                    {"id": "b", "sequence": "M K T"},
+                ],
+                "metrics": ["sequence_identity"],
+            },
+            compare=True,
+        )
+        result = Pipeline().compare(request)
+        self.assertEqual(result["sequence_order"], ["a", "b"])
+        self.assertEqual(result["sequence_baselines"]["sequence_identity"][0][1], 1.0)
+
     def test_residue_metric_requires_residue_representation(self):
         request = request_from_dict(
             {

@@ -146,9 +146,9 @@ A registry entry identifies an available adapter definition. The
 | `esm2-650m` | ESM-2 | `facebook/esm2_t33_650M_UR50D` | Hugging Face | Adapter implemented; checkpoint validation required |
 | `esm2-3b` | ESM-2 | `facebook/esm2_t36_3B_UR50D` | Hugging Face | Adapter implemented; checkpoint validation required |
 | `esm2-15b` | ESM-2 | `facebook/esm2_t48_15B_UR50D` | Hugging Face | Adapter implemented; checkpoint validation required |
-| `esmc-300m` | ESM-C | `Biohub/ESMC-300M` | Hugging Face | Access/license and checkpoint validation required |
-| `esmc-600m` | ESM-C | `Biohub/ESMC-600M` | Hugging Face | Same |
-| `esmc-6b` | ESM-C | `Biohub/ESMC-6B` | Hugging Face | Same |
+| `esmc-300m` | ESM-C | `biohub/ESMC-300M` | Biohub `esm` | 960 dimensions, 2,046 residues; checkpoint validation required |
+| `esmc-600m` | ESM-C | `biohub/ESMC-600M` | Biohub `esm` | 1,152 dimensions, 2,046 residues; checkpoint validation required |
+| `esmc-6b` | ESM-C | `biohub/ESMC-6B` | Biohub `esm` | 2,560 dimensions, 2,046 residues; very large checkpoint |
 | `prott5-xl-uniref50` | ProtTrans | `Rostlab/prot_t5_xl_uniref50` | Hugging Face | Adapter implemented; large checkpoint |
 | `protbert-bfd` | ProtTrans | `Rostlab/prot_bert_bfd` | Hugging Face | Adapter implemented; validation required |
 | `ankh-base` | Ankh | `ElnaggarLab/ankh-base` | Hugging Face | Non-commercial license; validation required |
@@ -160,9 +160,31 @@ availability. Users remain responsible for complying with upstream terms.
 
 ## Installation
 
-Python 3.11 or newer is required.
+The core library requires Python 3.11 or newer. The complete installation,
+including ESM-C, requires Python 3.12 or newer.
 
-### Core and development
+### Complete one-file installation
+
+From the repository root, create a Python 3.12+ environment and install the
+package with every runtime backend from `requirements.txt`:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+This installs the API, Hugging Face, ESM-C, and advanced-visualization
+dependencies. Model checkpoints are still downloaded only when a real model is
+first loaded. The dependency declarations live in `pyproject.toml`; the
+requirements file deliberately points to its `all` installation profile so the
+two files cannot drift apart.
+
+### Selective and development installation
+
+For a smaller editable installation, install only the profiles needed for the
+current environment:
 
 ```bash
 python -m venv .venv
@@ -183,13 +205,27 @@ python -m pip install -e '.[api]'
 python -m pip install -e '.[hf]'
 ```
 
+### ESM-C models
+
+ESM-C uses the maintained Biohub `esm` backend and currently requires Python
+3.12 or newer:
+
+```bash
+python -m pip install -e '.[esmc]'
+```
+
+It is intentionally separate from the generic Hugging Face adapter. See the
+[Python guide](doc/PYTHON_USAGE.md#esm-c-setup-and-troubleshooting) for a strict
+smoke test, supported devices/dtypes, and common failure messages.
+
 ### Advanced visualizations
 
 ```bash
 python -m pip install -e '.[visual]'
 ```
 
-Install everything only when the machine is intended to support every backend:
+The equivalent editable installation of all runtime backends plus development
+tools is:
 
 ```bash
 python -m pip install -e '.[all,dev]'

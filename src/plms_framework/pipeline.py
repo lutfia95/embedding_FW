@@ -28,9 +28,11 @@ class Pipeline:
         self.registry = registry or default_registry
 
     def estimate(self, request: EmbeddingRequest) -> dict:
+        self._validate_execution_options(request)
         estimates = []
         for model_id in request.models:
             adapter = self.registry.adapter(model_id)
+            adapter.validate_execution(request.execution)
             sequences = canonicalize_many(request.sequences, adapter.manifest.alphabet)
             estimates.append(adapter.estimate_resources(sequences))
         n = len(request.sequences)
@@ -44,12 +46,14 @@ class Pipeline:
     def embed(self, request: EmbeddingRequest) -> dict:
         if not request.models:
             raise ValidationError("At least one model is required")
+        self._validate_execution_options(request)
         started = datetime.now(UTC)
         model_outputs = {}
         failures = []
         for requested_id in request.models:
             try:
                 adapter = self.registry.adapter(requested_id)
+                adapter.validate_execution(request.execution)
                 sequences = canonicalize_many(request.sequences, adapter.manifest.alphabet)
                 adapter.validate_request(sequences, request.representations)
                 per_layer = {}
@@ -84,13 +88,14 @@ class Pipeline:
         finished = datetime.now(UTC)
         return {
             "schema_version": "1.0",
-            "sequence_order": [sequence.id for sequence in request.sequences],
+            "sequence_order": [sequence.id.strip() for sequence in request.sequences],
             "models": model_outputs,
             "failures": failures,
             "provenance": self._run_provenance(request, started, finished),
         }
 
     def compare(self, request: CompareRequest) -> dict:
+        self._validate_execution_options(request)
         n = len(request.sequences)
         if n < 2 and not request.cross_model.enabled:
             raise ValidationError(
@@ -123,6 +128,15 @@ class Pipeline:
                 "Residue metrics require a residue representation",
                 context={"metrics": sorted(requested_metrics & residue_metric_names)},
             )
+        residue_specs = [
+            spec
+            for spec in request.representations
+            if spec.method == RepresentationMethod.RESIDUE
+        ]
+        if (requested_metrics & residue_metric_names) and len(residue_specs) != 1:
+            raise ValidationError(
+                "Residue metrics require exactly one residue method/layer specification"
+            )
         if request.cross_model.enabled:
             if len(request.models) < 2:
                 raise ValidationError(
@@ -141,6 +155,16 @@ class Pipeline:
                     "The cross-model sequence representation must also be requested",
                     context={"representation": str(request.cross_model.representation)},
                 )
+            matching_cross_specs = [
+                spec
+                for spec in request.representations
+                if spec.method == request.cross_model.representation
+            ]
+            if cross_methods - RESIDUE_METHODS and len(matching_cross_specs) != 1:
+                raise ValidationError(
+                    "Cross-model sequence methods require exactly one requested layer for "
+                    f"{request.cross_model.representation}"
+                )
             if (
                 cross_methods & RESIDUE_METHODS
                 and RepresentationMethod.RESIDUE not in requested_methods
@@ -148,13 +172,18 @@ class Pipeline:
                 raise ValidationError(
                     "residue_cka and residue_rsa require the residue representation"
                 )
+            if cross_methods & RESIDUE_METHODS and len(residue_specs) != 1:
+                raise ValidationError(
+                    "Residue cross-model methods require exactly one residue method/layer "
+                    "specification"
+                )
         if request.execution.all_to_all == "exact" and n > request.execution.max_exact_sequences:
             raise ResourceLimitError(
                 f"Exact comparison limit is {request.execution.max_exact_sequences} sequences",
                 context={"sequence_count": n},
             )
         embedded = self.embed(request)
-        sequences = [item.sequence.replace(" ", "").upper() for item in request.sequences]
+        sequences = ["".join(item.sequence.split()).upper() for item in request.sequences]
         baselines = {}
         for metric in request.metrics:
             if str(metric) in SEQUENCE_METRICS:
@@ -210,9 +239,9 @@ class Pipeline:
                         if Visualization.RESIDUE_SIMILARITY_MAP in request.visualizations:
                             pair_result["similarity_matrix"] = similarity
                         pair_result["similarity_shape"] = [len(similarity), len(similarity[0])]
-                        residue_pairs[f"{request.sequences[i].id}::{request.sequences[j].id}"] = (
-                            pair_result
-                        )
+                        left_id = embedded["sequence_order"][i]
+                        right_id = embedded["sequence_order"][j]
+                        residue_pairs[f"{left_id}::{right_id}"] = pair_result
             output["matrices"] = matrices
             output["residue_pairs"] = residue_pairs
         embedded["sequence_baselines"] = baselines
@@ -239,6 +268,67 @@ class Pipeline:
         return embedded
 
     @staticmethod
+    def _validate_execution_options(request: EmbeddingRequest) -> None:
+        if not request.models:
+            raise ValidationError("At least one model is required")
+        if not request.sequences:
+            raise ValidationError("At least one sequence is required")
+        if not request.representations:
+            raise ValidationError("At least one representation is required")
+        representation_keys = [
+            (str(spec.method), repr(spec.layer)) for spec in request.representations
+        ]
+        duplicates = sorted(
+            {key for key in representation_keys if representation_keys.count(key) > 1}
+        )
+        if duplicates:
+            raise ValidationError(
+                "Each representation method/layer combination must be unique",
+                context={
+                    "duplicates": [
+                        {"method": method, "layer": layer} for method, layer in duplicates
+                    ]
+                },
+            )
+        execution = request.execution
+        if execution.device not in {"auto", "cpu", "cuda", "mps"}:
+            raise ValidationError(
+                "execution.device must be one of: auto, cpu, cuda, mps",
+                context={"device": execution.device},
+            )
+        if execution.precision not in {
+            "auto",
+            "float32",
+            "float16",
+            "fp16",
+            "bfloat16",
+            "bf16",
+        }:
+            raise ValidationError(
+                "execution.precision must be one of: auto, float32, float16, fp16, "
+                "bfloat16, bf16",
+                context={"precision": execution.precision},
+            )
+        if execution.all_to_all != "exact":
+            raise ValidationError(
+                "execution.all_to_all currently supports only 'exact'",
+                context={"all_to_all": execution.all_to_all},
+            )
+        if execution.on_long_sequence != "error":
+            raise ValidationError(
+                "execution.on_long_sequence currently supports only 'error'",
+                context={"on_long_sequence": execution.on_long_sequence},
+            )
+        if type(execution.allow_partial) is not bool:
+            raise ValidationError("execution.allow_partial must be a boolean")
+        if (
+            isinstance(execution.max_exact_sequences, bool)
+            or not isinstance(execution.max_exact_sequences, int)
+            or execution.max_exact_sequences < 2
+        ):
+            raise ValidationError("execution.max_exact_sequences must be an integer of at least 2")
+
+    @staticmethod
     def _run_provenance(request, started, finished) -> dict:
         provenance = {
             "framework_version": __version__,
@@ -249,9 +339,9 @@ class Pipeline:
             "finished_at": finished.isoformat(),
             "duration_seconds": (finished - started).total_seconds(),
             "sequence_digests": {
-                item.id: {
-                    "sha256": digest(item.sequence.replace(" ", "").upper()),
-                    "length": len(item.sequence.replace(" ", "")),
+                item.id.strip(): {
+                    "sha256": digest("".join(item.sequence.split()).upper()),
+                    "length": len("".join(item.sequence.split())),
                 }
                 for item in request.sequences
             },

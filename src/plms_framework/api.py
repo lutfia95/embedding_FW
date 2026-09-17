@@ -4,7 +4,7 @@ import os
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 try:
     from fastapi import FastAPI, Request, UploadFile
@@ -71,10 +71,12 @@ class RepresentationInput(StrictModel):
 
 
 class ExecutionInput(StrictModel):
-    precision: str = "auto"
-    device: str = "auto"
-    all_to_all: str = "exact"
-    on_long_sequence: str = "error"
+    precision: Literal["auto", "float32", "float16", "fp16", "bfloat16", "bf16"] = (
+        "auto"
+    )
+    device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    all_to_all: Literal["exact"] = "exact"
+    on_long_sequence: Literal["error"] = "error"
     allow_partial: bool = True
     max_exact_sequences: int = Field(default=2_000, ge=2)
 

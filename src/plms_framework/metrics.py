@@ -156,10 +156,15 @@ def _parse_blosum62() -> dict[tuple[str, str], int]:
 
 
 BLOSUM62 = _parse_blosum62()
+_BLOSUM_RESIDUES = {left for left, _ in BLOSUM62}
 
 
 def _blosum_value(left: str, right: str) -> int:
-    return BLOSUM62.get((left, right), BLOSUM62.get(("X", right), -1))
+    # The bundled table has explicit B/Z/X rows but not J/U/O. Treat any
+    # unsupported residue symmetrically as X so pair order cannot change a score.
+    left = left if left in _BLOSUM_RESIDUES else "X"
+    right = right if right in _BLOSUM_RESIDUES else "X"
+    return BLOSUM62[(left, right)]
 
 
 def _blosum_alignment_score(left: str, right: str, *, local: bool, gap: int = -4) -> int:

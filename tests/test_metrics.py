@@ -36,6 +36,13 @@ class MetricTests(unittest.TestCase):
         self.assertAlmostEqual(normalized_blosum62("MKT", "MKT", local=False), 1.0)
         self.assertAlmostEqual(normalized_blosum62("MKT", "MKT", local=True), 1.0)
 
+    def test_blosum_unsupported_residues_are_order_independent(self):
+        for local in (False, True):
+            self.assertAlmostEqual(
+                normalized_blosum62("AUO", "MJK", local=local),
+                normalized_blosum62("MJK", "AUO", local=local),
+            )
+
     def test_residue_alignment(self):
         similarity = residue_similarity([[1, 0], [0, 1]], [[1, 0], [0, 1]])
         global_result = align_similarity(similarity, local=False)

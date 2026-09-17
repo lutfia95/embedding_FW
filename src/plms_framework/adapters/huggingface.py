@@ -15,6 +15,7 @@ class HuggingFaceAdapter(ModelAdapter):
         self._model = None
         self._tokenizer = None
         self._device = None
+        self._dtype = None
         self._resolved_revision = None
 
     def availability(self) -> Availability:
@@ -46,7 +47,7 @@ class HuggingFaceAdapter(ModelAdapter):
                 if torch.backends.mps.is_available()
                 else "cpu"
             )
-        dtype = None
+        dtype = torch.float32 if precision == "float32" else None
         if precision in {"float16", "fp16"}:
             dtype = torch.float16
         elif precision in {"bfloat16", "bf16"}:
@@ -70,6 +71,7 @@ class HuggingFaceAdapter(ModelAdapter):
                 if self.manifest.architecture == "encoder-decoder"
                 else loaded.base_model
             )
+            self._dtype = str(next(self._model.parameters()).dtype)
         except Exception as exc:
             raise ModelUnavailableError(
                 f"Could not load {self.manifest.id}: {exc}",
@@ -81,12 +83,14 @@ class HuggingFaceAdapter(ModelAdapter):
         self._model = None
         self._tokenizer = None
         self._device = None
+        self._dtype = None
         self._resolved_revision = None
 
     def provenance(self) -> dict:
         value = super().provenance()
         value["resolved_revision"] = self._resolved_revision
         value["device"] = self._device
+        value["dtype"] = self._dtype
         return value
 
     def _model_input(self, sequence: str) -> str:
@@ -118,6 +122,7 @@ class HuggingFaceAdapter(ModelAdapter):
         with torch.inference_mode():
             output = self._model(**model_inputs, output_hidden_states=isinstance(layer, int))
         hidden = output.hidden_states[layer] if isinstance(layer, int) else output.last_hidden_state
+        output_dtype = str(hidden.dtype)
         hidden = hidden.detach().float().cpu()
         attention = encoded["attention_mask"].cpu()
         results = []
@@ -139,7 +144,7 @@ class HuggingFaceAdapter(ModelAdapter):
                     residue_tensor.tolist(),
                     native=native,
                     token_to_residue=list(range(1, len(item.sequence) + 1)),
-                    metadata={"layer": layer, "device": self._device, "dtype": str(hidden.dtype)},
+                    metadata={"layer": layer, "device": self._device, "dtype": output_dtype},
                 )
             )
         return results

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 
-from .adapters import DeterministicAdapter, HuggingFaceAdapter, ModelAdapter
+from .adapters import DeterministicAdapter, ESMCAdapter, HuggingFaceAdapter, ModelAdapter
 from .errors import ValidationError
 from .models import ModelManifest, RepresentationMethod
 
@@ -166,25 +166,67 @@ def build_default_registry() -> ModelRegistry:
             ),
             HuggingFaceAdapter,
         )
-    for model_id, artifact, parameters in (
-        ("esmc-300m", "Biohub/ESMC-300M", 300_000_000),
-        ("esmc-600m", "Biohub/ESMC-600M", 600_000_000),
-        ("esmc-6b", "Biohub/ESMC-6B", 6_000_000_000),
+    for model_id, artifact, layers, dimension, parameters, aliases in (
+        (
+            "esmc-300m",
+            "biohub/ESMC-300M",
+            30,
+            960,
+            300_000_000,
+            ("ESMC-300M", "esmc_300m", "biohub/ESMC-300M", "Biohub/ESMC-300M"),
+        ),
+        (
+            "esmc-600m",
+            "biohub/ESMC-600M",
+            36,
+            1152,
+            600_000_000,
+            ("ESMC-600M", "esmc_600m", "biohub/ESMC-600M", "Biohub/ESMC-600M"),
+        ),
+        (
+            "esmc-6b",
+            "biohub/ESMC-6B",
+            80,
+            2560,
+            6_000_000_000,
+            ("ESMC-6B", "esmc_6b", "biohub/ESMC-6B", "Biohub/ESMC-6B"),
+        ),
     ):
         registry.register(
-            _hf_manifest(
+            ModelManifest(
                 id=model_id,
                 display_name=artifact.rsplit("/", 1)[1],
                 family="ESM-C",
+                provider="biohub",
                 artifact=artifact,
-                license="See Biohub/ESM upstream model card for this checkpoint",
-                layers=None,
-                dimension=None,
+                revision="main",
+                license="MIT; review the Biohub model card and Acceptable Use Policy",
+                citation="See the upstream model card and ESM-C publication",
+                architecture="encoder",
+                input_modalities=("sequence",),
+                alphabet=AA_ALPHABET,
+                ambiguous_residues="B, U, Z, O, and X have explicit tokenizer entries; J maps to unknown",
+                tokenizer_convention="One residue token per amino acid plus <cls> and <eos>",
+                max_native_length=2046,
+                num_layers=layers,
+                embedding_dimension=dimension,
+                representations=CORE_REPRESENTATIONS,
+                default_layer="final_hidden_state",
+                one_token_per_residue=True,
+                special_tokens="<cls>, <eos>, and padding are excluded from residue representations",
+                devices=("cpu", "cuda"),
+                precisions=("float32", "bfloat16"),
                 parameters=parameters,
-                max_length=None,
-                limitations=("Checkpoint may require accepting upstream access and license terms",),
+                conformance="adapter_implemented_checkpoint_validation_required",
+                limitations=(
+                    "Requires Python 3.12+ and the optional Biohub esm backend",
+                    "Published context is 2048 tokens, leaving 2046 native residues after boundaries",
+                    "Large checkpoint downloads and substantial accelerator memory may be required",
+                ),
+                aliases=aliases,
+                backend="biohub_esm",
             ),
-            HuggingFaceAdapter,
+            ESMCAdapter,
         )
     for manifest in (
         _hf_manifest(

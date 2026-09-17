@@ -41,7 +41,7 @@ def canonicalize_many(
 
 
 def digest(sequence: str) -> str:
-    return hashlib.sha256(sequence.encode("ascii")).hexdigest()
+    return hashlib.sha256(sequence.encode("utf-8")).hexdigest()
 
 
 def parse_fasta(text: str) -> tuple[ProteinSequence, ...]:
