@@ -65,7 +65,7 @@ python -m pip install -e .
 
 The core installation has no mandatory third-party dependencies and includes
 the deterministic reference adapter. Install the Hugging Face dependencies to
-run ESM-2, ProtT5, ProtBert, and Ankh checkpoints:
+run ESM-1, ESM-2, ProtTrans, Ankh, and ProGen2 checkpoints:
 
 ```bash
 python -m pip install -e '.[hf]'
@@ -368,17 +368,30 @@ The currently registered IDs are:
 | `esm2-650m` | Hugging Face | 33 | 1,280 | 1,022 | Checkpoint validation required |
 | `esm2-3b` | Hugging Face | 36 | 2,560 | 1,022 | Checkpoint validation required |
 | `esm2-15b` | Hugging Face | 48 | 5,120 | 1,022 | Checkpoint validation required |
+| `esm1b-650m` | Hugging Face | 33 | 1,280 | 1,022 | Pinned; checkpoint validation required |
+| `esm1v-650m-1` | Hugging Face | 33 | 1,280 | 1,022 | Pinned; checkpoint validation required |
+| `esm1v-650m-2` | Hugging Face | 33 | 1,280 | 1,022 | Pinned; checkpoint validation required |
+| `esm1v-650m-3` | Hugging Face | 33 | 1,280 | 1,022 | Pinned; checkpoint validation required |
+| `esm1v-650m-4` | Hugging Face | 33 | 1,280 | 1,022 | Pinned; checkpoint validation required |
+| `esm1v-650m-5` | Hugging Face | 33 | 1,280 | 1,022 | Pinned; checkpoint validation required |
 | `esmc-300m` | Biohub `esm` | 30 | 960 | 2,046 | Adapter implemented; checkpoint validation required |
 | `esmc-600m` | Biohub `esm` | 36 | 1,152 | 2,046 | Adapter implemented; checkpoint validation required |
 | `esmc-6b` | Biohub `esm` | 80 | 2,560 | 2,046 | Adapter implemented; checkpoint validation required |
 | `prott5-xl-uniref50` | Hugging Face | 24 | 1,024 | Not declared | Checkpoint validation required |
+| `prott5-xl-bfd` | Hugging Face | 24 | 1,024 | Not declared | Pinned; checkpoint validation required |
+| `protbert` | Hugging Face | 30 | 1,024 | Not declared | Pinned; checkpoint validation required |
 | `protbert-bfd` | Hugging Face | 30 | 1,024 | Not declared | Checkpoint validation required |
+| `protalbert` | Hugging Face | 12 | 4,096 | Not declared | Pinned; checkpoint validation required |
+| `protxlnet` | Hugging Face | 30 | 1,024 | Not declared | Pinned; checkpoint validation required |
 | `ankh-base` | Hugging Face | Not declared | 768 | Not declared | Checkpoint validation required |
 | `ankh-large` | Hugging Face | Not declared | 1,536 | Not declared | Checkpoint validation required |
+| `progen2-small` | Hugging Face custom code | 12 | 1,024 | 1,022 | Pinned community conversion; checkpoint validation required |
+| `progen2-medium` | Hugging Face custom code | 27 | 1,536 | 1,022 | Pinned community conversion; checkpoint validation required |
 
-Model aliases include `reference`, upstream ESM-2 checkpoint names, Biohub
-ESM-C forms such as `esmc_300m` and `biohub/ESMC-300M`, and the ProtTrans
-underscore-form artifact names recorded in each manifest.
+Model aliases include `reference`, upstream ESM-1/ESM-2 checkpoint names,
+Biohub ESM-C forms such as `esmc_300m` and `biohub/ESMC-300M`, ProtTrans
+underscore forms such as `prott5_xl_bfd`, and `progen2_small`/
+`progen2_medium`.
 
 `adapter.availability().available` currently means that the adapter's required
 Python packages are importable. It does not prove that a checkpoint is cached,
@@ -396,11 +409,39 @@ conformance suite. Treat the status literally.
 | Family | Install | Input handling | Practical notes |
 |---|---|---|---|
 | Reference | Core package | One character per residue | Deterministic software fixture only; never use as a biological model |
+| ESM-1b/1v | `.[hf]` | Raw sequence through the checkpoint tokenizer | Six pinned 650M checkpoints; registered but not conformance-tested here |
 | ESM-2 | `.[hf]` | Raw sequence through the checkpoint tokenizer | `esm2-8m` is the only checkpoint with a checked-in real-model conformance test |
 | ESM-C | `.[esmc]` | Biohub character tokenizer with `<cls>`/`<eos>` removed | Python 3.12+; CPU/CUDA; 2,046 residues; current adapter uses portable SDPA |
-| ProtT5 | `.[hf]` | Residues are space-separated before tokenization | Encoder output only; large checkpoint; upstream maximum is not declared in the manifest |
-| ProtBert | `.[hf]` | Residues are space-separated before tokenization | Registered but not conformance-tested here |
+| ProtT5 | `.[hf]` | Residues are space-separated before tokenization | UniRef50 and BFD XL checkpoints; encoder output only; large checkpoints |
+| ProtBert | `.[hf]` | Residues are space-separated before tokenization | UniRef100 and BFD checkpoints; not conformance-tested here |
+| ProtAlbert | `.[hf]` | Residues are space-separated before tokenization | 4,096-dimensional output; sparse upstream model metadata |
+| ProtXLNet | `.[hf]` | Residues are space-separated before tokenization | XLNet base-model output; sparse upstream model metadata |
 | Ankh | `.[hf]` | Raw sequence; encoder side of encoder-decoder model | Non-commercial upstream license; verify terms and checkpoint behavior |
+| ProGen2 | `.[hf]` | Raw sequence through a causal tokenizer | Pinned community conversions; executes remote model code; residue states encode left context only |
+
+The Hugging Face adapter selects a base encoder for ESM, BERT, ALBERT, and
+XLNet; the encoder side of sequence-to-sequence checkpoints for ProtT5 and
+Ankh; and a causal-LM loader for ProGen2. Special and padding tokens are removed
+with tokenizer-provided masks. A checkpoint fails rather than returning an
+embedding when the remaining token count is not exactly the sequence length.
+
+ProGen2 is an explicit security exception. Its manifests set
+`trust_remote_code=true` because the registered `hugohrban` conversions provide
+custom configuration and modeling code. Both revisions are immutable pins, but
+deployments should still review that code and upstream licensing before use.
+
+Run all newly registered checkpoints on a capable machine with:
+
+```bash
+HF_HOME=.model_cache PLMS_RUN_EXTENDED_MODEL_TESTS=1 \
+PLMS_TEST_DEVICE=cuda PLMS_TEST_PRECISION=float16 \
+  python -m unittest tests.test_real_models.ExtendedRealModelTests -v
+```
+
+This opt-in suite checks loading and mean/residue output shapes for all six
+ESM-1 checkpoints, the four added ProtTrans checkpoints, and both ProGen2
+checkpoints. It is skipped by the normal dependency-free test suite. Set
+`PLMS_TEST_MODELS` to comma-separated IDs or aliases to run a smaller subset.
 
 `mean` is intentionally the same framework-controlled operation for every
 family: average exactly one returned vector per native residue, then apply the
@@ -1100,7 +1141,8 @@ list. Each embedding requires `sequence_id` and `values`, with optional
 
 Recognized `source` fields are `display_name`, `family`, `provider`, `artifact`,
 `revision`, `license`, `citation`, `architecture`, `tokenizer_convention`,
-`one_token_per_residue`, `special_tokens`, `parameters`, and `preprocess`.
+`one_token_per_residue`, `special_tokens`, `parameters`, `preprocess`, and
+`trust_remote_code`.
 
 Imported metadata is provenance, not verification. The framework validates the
 structure of the values but does not prove that they came from the stated

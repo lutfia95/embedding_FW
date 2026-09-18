@@ -67,6 +67,7 @@ def _hf_manifest(
     limitations: tuple[str, ...] = (),
     revision: str = "main",
     conformance: str = "adapter_implemented_checkpoint_validation_required",
+    trust_remote_code: bool = False,
 ) -> ModelManifest:
     return ModelManifest(
         id=id,
@@ -97,6 +98,7 @@ def _hf_manifest(
         aliases=aliases,
         backend="huggingface",
         preprocess=preprocess,
+        trust_remote_code=trust_remote_code,
     )
 
 
@@ -162,6 +164,66 @@ def build_default_registry() -> ModelRegistry:
                     "tested_cpu_shapes_masking_batch_invariance"
                     if model_id == "esm2-8m"
                     else "adapter_implemented_checkpoint_validation_required"
+                ),
+            ),
+            HuggingFaceAdapter,
+        )
+    for model_id, artifact, family, revision in (
+        (
+            "esm1b-650m",
+            "facebook/esm1b_t33_650M_UR50S",
+            "ESM-1b",
+            "7b37824baec4d3658e1df7479222a7c79b465b76",
+        ),
+        (
+            "esm1v-650m-1",
+            "facebook/esm1v_t33_650M_UR90S_1",
+            "ESM-1v",
+            "8bfdb1892536cc77bd0760b9c25ddced2cd0b4c8",
+        ),
+        (
+            "esm1v-650m-2",
+            "facebook/esm1v_t33_650M_UR90S_2",
+            "ESM-1v",
+            "3c1e9e64480f069b163e456c361bfd80a8bab04c",
+        ),
+        (
+            "esm1v-650m-3",
+            "facebook/esm1v_t33_650M_UR90S_3",
+            "ESM-1v",
+            "0b00fd112e63f6b5e70a9cd8484d4e660312ce70",
+        ),
+        (
+            "esm1v-650m-4",
+            "facebook/esm1v_t33_650M_UR90S_4",
+            "ESM-1v",
+            "443968f644da132d323bbc6321a6d443149fa57b",
+        ),
+        (
+            "esm1v-650m-5",
+            "facebook/esm1v_t33_650M_UR90S_5",
+            "ESM-1v",
+            "fb2e51cb0f605cbad2c4ca3bb784be7bc8e2f4a8",
+        ),
+    ):
+        upstream_name = artifact.rsplit("/", 1)[1]
+        registry.register(
+            _hf_manifest(
+                id=model_id,
+                display_name=upstream_name,
+                family=family,
+                artifact=artifact,
+                license="MIT",
+                layers=33,
+                dimension=1280,
+                parameters=650_000_000,
+                max_length=1022,
+                aliases=(upstream_name, artifact),
+                revision=revision,
+                limitations=(
+                    "Large checkpoint download and substantial accelerator memory may be required",
+                    "Checkpoint-specific numerical conformance has not yet been run in this "
+                    "repository",
                 ),
             ),
             HuggingFaceAdapter,
@@ -244,6 +306,36 @@ def build_default_registry() -> ModelRegistry:
             aliases=("prot_t5_xl_uniref50",),
         ),
         _hf_manifest(
+            id="prott5-xl-bfd",
+            display_name="ProtT5-XL-BFD",
+            family="ProtTrans",
+            artifact="Rostlab/prot_t5_xl_bfd",
+            license="See upstream model card",
+            layers=24,
+            dimension=1024,
+            parameters=3_000_000_000,
+            max_length=None,
+            architecture="encoder-decoder",
+            preprocess="space_separated",
+            aliases=("prott5_xl_bfd", "prot_t5_xl_bfd"),
+            revision="7ae1d5c1d148d6c65c7e294cc72807e5b454fdb7",
+            limitations=("Large checkpoint download and accelerator memory requirement",),
+        ),
+        _hf_manifest(
+            id="protbert",
+            display_name="ProtBert",
+            family="ProtTrans",
+            artifact="Rostlab/prot_bert",
+            license="See upstream model card",
+            layers=30,
+            dimension=1024,
+            parameters=420_000_000,
+            max_length=None,
+            preprocess="space_separated",
+            aliases=("prot_bert",),
+            revision="7a894481acdc12202f0a415dd567f6cfdb698908",
+        ),
+        _hf_manifest(
             id="protbert-bfd",
             display_name="ProtBert-BFD",
             family="ProtTrans",
@@ -255,6 +347,39 @@ def build_default_registry() -> ModelRegistry:
             max_length=None,
             preprocess="space_separated",
             aliases=("prot_bert_bfd",),
+        ),
+        _hf_manifest(
+            id="protalbert",
+            display_name="ProtAlbert",
+            family="ProtTrans",
+            artifact="Rostlab/prot_albert",
+            license="See upstream repository",
+            layers=12,
+            dimension=4096,
+            parameters=224_000_000,
+            max_length=None,
+            preprocess="space_separated",
+            aliases=("prot_albert",),
+            revision="2384f5574ea4b85218ae7d5e21d17957105e672e",
+            limitations=("Upstream checkpoint has minimal model-card metadata",),
+        ),
+        _hf_manifest(
+            id="protxlnet",
+            display_name="ProtXLNet",
+            family="ProtTrans",
+            artifact="Rostlab/prot_xlnet",
+            license="See upstream repository",
+            layers=30,
+            dimension=1024,
+            parameters=409_000_000,
+            max_length=None,
+            preprocess="space_separated",
+            aliases=("prot_xlnet",),
+            revision="7fe4d7b13695ccf8fb14a257986976bd7f704782",
+            limitations=(
+                "Uses XLNet permutation-language-model architecture",
+                "Upstream checkpoint has minimal model-card metadata",
+            ),
         ),
         _hf_manifest(
             id="ankh-base",
@@ -279,6 +404,48 @@ def build_default_registry() -> ModelRegistry:
             parameters=1_150_000_000,
             max_length=None,
             architecture="encoder-decoder",
+        ),
+        _hf_manifest(
+            id="progen2-small",
+            display_name="ProGen2 Small",
+            family="ProGen2",
+            artifact="hugohrban/progen2-small",
+            license="BSD-3-Clause; verify the conversion and upstream model terms",
+            layers=12,
+            dimension=1024,
+            parameters=151_000_000,
+            max_length=1022,
+            architecture="causal",
+            aliases=("progen2_small",),
+            revision="43237a0b733c6629226a079266d2985c9fdce9b7",
+            trust_remote_code=True,
+            limitations=(
+                "Community Hugging Face conversion of the upstream ProGen2 checkpoint",
+                "Loading executes revision-pinned remote model code",
+                "Causal residue representations only encode left context",
+                "The 1,024-token context is conservatively exposed as 1,022 residues",
+            ),
+        ),
+        _hf_manifest(
+            id="progen2-medium",
+            display_name="ProGen2 Medium",
+            family="ProGen2",
+            artifact="hugohrban/progen2-medium",
+            license="BSD-3-Clause; verify the conversion and upstream model terms",
+            layers=27,
+            dimension=1536,
+            parameters=764_000_000,
+            max_length=1022,
+            architecture="causal",
+            aliases=("progen2_medium",),
+            revision="6f022f76b5db11142dc8f446cfab111fe75422d6",
+            trust_remote_code=True,
+            limitations=(
+                "Community Hugging Face conversion of the upstream ProGen2 checkpoint",
+                "Loading executes revision-pinned remote model code",
+                "Causal residue representations only encode left context",
+                "The 1,024-token context is conservatively exposed as 1,022 residues",
+            ),
         ),
     ):
         registry.register(manifest, HuggingFaceAdapter)

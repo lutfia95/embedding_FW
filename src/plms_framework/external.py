@@ -247,6 +247,7 @@ def build_imported_space(
         "aliases": [],
         "backend": "external_import",
         "preprocess": source.get("preprocess", "unreported"),
+        "trust_remote_code": source.get("trust_remote_code"),
     }
     provenance = {
         "framework_version": __version__,

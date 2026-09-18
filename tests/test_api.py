@@ -27,7 +27,7 @@ class ApiTests(unittest.TestCase):
     def test_registry_and_embedding(self):
         response = self.client.get("/v1/models")
         self.assertEqual(response.status_code, 200)
-        self.assertGreaterEqual(response.json()["count"], 14)
+        self.assertGreaterEqual(response.json()["count"], 26)
         response = self.client.post(
             "/v1/embed",
             json={

@@ -130,7 +130,7 @@ option tables and typed examples, see
 - Job cancellation, persistent queue, authentication, quotas, and artifact expiry
 - Versioned biological benchmark datasets and trained downstream heads
 - Full conformance runs for every real checkpoint and hardware/precision pair
-- MSA, structure-token, multimodal, inverse-folding, causal, and antibody adapters
+- MSA, structure-token, multimodal, inverse-folding, and antibody adapters
 
 A registry entry identifies an available adapter definition. The
 `conformance` field records whether its numerical behavior has been validated.
@@ -146,13 +146,25 @@ A registry entry identifies an available adapter definition. The
 | `esm2-650m` | ESM-2 | `facebook/esm2_t33_650M_UR50D` | Hugging Face | Adapter implemented; checkpoint validation required |
 | `esm2-3b` | ESM-2 | `facebook/esm2_t36_3B_UR50D` | Hugging Face | Adapter implemented; checkpoint validation required |
 | `esm2-15b` | ESM-2 | `facebook/esm2_t48_15B_UR50D` | Hugging Face | Adapter implemented; checkpoint validation required |
+| `esm1b-650m` | ESM-1b | `facebook/esm1b_t33_650M_UR50S` | Hugging Face | Revision pinned; checkpoint validation required |
+| `esm1v-650m-1` | ESM-1v | `facebook/esm1v_t33_650M_UR90S_1` | Hugging Face | Revision pinned; checkpoint validation required |
+| `esm1v-650m-2` | ESM-1v | `facebook/esm1v_t33_650M_UR90S_2` | Hugging Face | Revision pinned; checkpoint validation required |
+| `esm1v-650m-3` | ESM-1v | `facebook/esm1v_t33_650M_UR90S_3` | Hugging Face | Revision pinned; checkpoint validation required |
+| `esm1v-650m-4` | ESM-1v | `facebook/esm1v_t33_650M_UR90S_4` | Hugging Face | Revision pinned; checkpoint validation required |
+| `esm1v-650m-5` | ESM-1v | `facebook/esm1v_t33_650M_UR90S_5` | Hugging Face | Revision pinned; checkpoint validation required |
 | `esmc-300m` | ESM-C | `biohub/ESMC-300M` | Biohub `esm` | 960 dimensions, 2,046 residues; checkpoint validation required |
 | `esmc-600m` | ESM-C | `biohub/ESMC-600M` | Biohub `esm` | 1,152 dimensions, 2,046 residues; checkpoint validation required |
 | `esmc-6b` | ESM-C | `biohub/ESMC-6B` | Biohub `esm` | 2,560 dimensions, 2,046 residues; very large checkpoint |
 | `prott5-xl-uniref50` | ProtTrans | `Rostlab/prot_t5_xl_uniref50` | Hugging Face | Adapter implemented; large checkpoint |
+| `prott5-xl-bfd` | ProtTrans | `Rostlab/prot_t5_xl_bfd` | Hugging Face | Revision pinned; large checkpoint; validation required |
+| `protbert` | ProtTrans | `Rostlab/prot_bert` | Hugging Face | Revision pinned; validation required |
 | `protbert-bfd` | ProtTrans | `Rostlab/prot_bert_bfd` | Hugging Face | Adapter implemented; validation required |
+| `protalbert` | ProtTrans | `Rostlab/prot_albert` | Hugging Face | Revision pinned; validation required |
+| `protxlnet` | ProtTrans | `Rostlab/prot_xlnet` | Hugging Face | Revision pinned; validation required |
 | `ankh-base` | Ankh | `ElnaggarLab/ankh-base` | Hugging Face | Non-commercial license; validation required |
 | `ankh-large` | Ankh | `ElnaggarLab/ankh-large` | Hugging Face | Non-commercial license; validation required |
+| `progen2-small` | ProGen2 | `hugohrban/progen2-small` | Hugging Face custom code | Pinned community conversion; validation required |
+| `progen2-medium` | ProGen2 | `hugohrban/progen2-medium` | Hugging Face custom code | Pinned community conversion; validation required |
 
 Always inspect `GET /v1/models/{model_id}` before using a model. The registry
 returns its current license note, limits, supported methods, and local
@@ -939,9 +951,27 @@ HF_HOME=.model_cache PLMS_RUN_MODEL_TESTS=1 \
   python -m unittest tests.test_real_models -v
 ```
 
+On a checkpoint-capable machine, run the newly registered ESM-1, ProtTrans,
+and ProGen2 shape suite with:
+
+```bash
+HF_HOME=.model_cache PLMS_RUN_EXTENDED_MODEL_TESTS=1 \
+PLMS_TEST_DEVICE=cuda PLMS_TEST_PRECISION=float16 \
+  python -m unittest tests.test_real_models.ExtendedRealModelTests -v
+```
+
+The suite is opt-in because it downloads every listed checkpoint and requires
+substantial cache storage and accelerator memory. Passing it verifies loading,
+token-to-residue masking, and final output shapes; it does not automatically
+promote manifest conformance labels. Set `PLMS_TEST_MODELS` to a comma-separated
+subset of IDs or aliases when the machine should validate checkpoints in
+smaller groups.
+
 ## Security notes
 
-- Hugging Face loading sets `trust_remote_code=False`.
+- Hugging Face loading defaults to `trust_remote_code=False`. The two ProGen2
+  community conversions are explicit, revision-pinned exceptions and expose
+  `trust_remote_code=true` in their manifests and provenance.
 - Artifact and job names are restricted to safe characters.
 - Artifact publication uses temporary files and atomic replacement.
 - Access tokens are not part of request or provenance schemas.
