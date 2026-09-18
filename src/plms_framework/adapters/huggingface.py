@@ -8,7 +8,7 @@ from .base import ModelAdapter
 
 
 class HuggingFaceAdapter(ModelAdapter):
-    """Lazy adapter for compatible Hugging Face encoder checkpoints."""
+    """Lazy adapter for compatible Hugging Face protein checkpoints."""
 
     def __init__(self, manifest) -> None:
         super().__init__(manifest)
@@ -37,7 +37,12 @@ class HuggingFaceAdapter(ModelAdapter):
         if self._model is not None:
             return
         import torch
-        from transformers import AutoModelForMaskedLM, AutoModelForSeq2SeqLM, AutoTokenizer
+        from transformers import (
+            AutoModel,
+            AutoModelForCausalLM,
+            AutoModelForSeq2SeqLM,
+            AutoTokenizer,
+        )
 
         if device == "auto":
             device = (
@@ -52,18 +57,29 @@ class HuggingFaceAdapter(ModelAdapter):
             dtype = torch.float16
         elif precision in {"bfloat16", "bf16"}:
             dtype = torch.bfloat16
-        kwargs = {"revision": self.manifest.revision, "trust_remote_code": False}
+        kwargs = {
+            "revision": self.manifest.revision,
+            "trust_remote_code": self.manifest.trust_remote_code,
+        }
         if dtype is not None:
             kwargs["torch_dtype"] = dtype
         try:
             self._tokenizer = AutoTokenizer.from_pretrained(
-                self.manifest.artifact, revision=self.manifest.revision
+                self.manifest.artifact,
+                revision=self.manifest.revision,
+                trust_remote_code=self.manifest.trust_remote_code,
             )
-            model_class = (
-                AutoModelForSeq2SeqLM
-                if self.manifest.architecture == "encoder-decoder"
-                else AutoModelForMaskedLM
-            )
+            if self._tokenizer.pad_token_id is None:
+                fallback_pad_token = self._tokenizer.eos_token or self._tokenizer.unk_token
+                if fallback_pad_token is None:
+                    raise ValueError(
+                        f"Tokenizer for {self.manifest.id} has no padding, EOS, or unknown token"
+                    )
+                self._tokenizer.pad_token = fallback_pad_token
+            model_class = {
+                "encoder-decoder": AutoModelForSeq2SeqLM,
+                "causal": AutoModelForCausalLM,
+            }.get(self.manifest.architecture, AutoModel)
             loaded = model_class.from_pretrained(self.manifest.artifact, **kwargs).to(device).eval()
             self._resolved_revision = getattr(loaded.config, "_commit_hash", None)
             self._model = (
@@ -91,6 +107,7 @@ class HuggingFaceAdapter(ModelAdapter):
         value["resolved_revision"] = self._resolved_revision
         value["device"] = self._device
         value["dtype"] = self._dtype
+        value["trust_remote_code"] = self.manifest.trust_remote_code
         return value
 
     def _model_input(self, sequence: str) -> str:
@@ -119,9 +136,17 @@ class HuggingFaceAdapter(ModelAdapter):
         )
         special = encoded.pop("special_tokens_mask")
         model_inputs = {name: tensor.to(self._device) for name, tensor in encoded.items()}
+        output_hidden_states = isinstance(layer, int) or self.manifest.architecture == "causal"
+        if self.manifest.architecture == "causal":
+            model_inputs["use_cache"] = False
         with torch.inference_mode():
-            output = self._model(**model_inputs, output_hidden_states=isinstance(layer, int))
-        hidden = output.hidden_states[layer] if isinstance(layer, int) else output.last_hidden_state
+            output = self._model(**model_inputs, output_hidden_states=output_hidden_states)
+        if isinstance(layer, int):
+            hidden = output.hidden_states[layer]
+        elif self.manifest.architecture == "causal":
+            hidden = output.hidden_states[-1]
+        else:
+            hidden = output.last_hidden_state
         output_dtype = str(hidden.dtype)
         hidden = hidden.detach().float().cpu()
         attention = encoded["attention_mask"].cpu()
@@ -131,13 +156,15 @@ class HuggingFaceAdapter(ModelAdapter):
             residue_tensor = hidden[row][residue_mask]
             if residue_tensor.shape[0] != len(item.sequence):
                 raise ValidationError(
-                    f"Tokenizer mapping for {self.manifest.id} produced {residue_tensor.shape[0]} residue tokens "
+                    f"Tokenizer mapping for {self.manifest.id} produced "
+                    f"{residue_tensor.shape[0]} residue tokens "
                     f"for {len(item.sequence)} residues",
                     context={"sequence_id": item.id},
                 )
             native = None
-            if "pooler_output" in output and output.pooler_output is not None:
-                native = output.pooler_output[row].detach().float().cpu().tolist()
+            pooler_output = getattr(output, "pooler_output", None)
+            if pooler_output is not None:
+                native = pooler_output[row].detach().float().cpu().tolist()
             results.append(
                 RawEmbedding(
                     item.id,

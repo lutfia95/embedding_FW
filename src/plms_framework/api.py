@@ -161,6 +161,7 @@ class ImportedSourceInput(StrictModel):
     special_tokens: str | None = None
     parameters: int | None = Field(default=None, ge=0)
     preprocess: str | None = None
+    trust_remote_code: bool | None = None
 
 
 class ImportSpaceInput(StrictModel):

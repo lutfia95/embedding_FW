@@ -9,7 +9,11 @@ class ExternalSpaceTests(unittest.TestCase):
     def test_vector_and_residue_representations(self):
         result = build_imported_space(
             space_name="lab:model-v1",
-            source={"provider": "Example Lab", "revision": "abc123"},
+            source={
+                "provider": "Example Lab",
+                "revision": "abc123",
+                "trust_remote_code": True,
+            },
             representations=[
                 {
                     "method": "mean",
@@ -33,6 +37,7 @@ class ExternalSpaceTests(unittest.TestCase):
         self.assertEqual(result["sequence_order"], ["a", "b"])
         model = result["models"]["lab:model-v1"]
         self.assertEqual(model["manifest"]["revision"], "abc123")
+        self.assertTrue(model["manifest"]["trust_remote_code"])
         self.assertEqual(
             model["manifest"]["conformance"], "externally_supplied_structural_validation_only"
         )

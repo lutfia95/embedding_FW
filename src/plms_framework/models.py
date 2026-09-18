@@ -216,6 +216,7 @@ class ModelManifest:
     aliases: tuple[str, ...] = ()
     backend: str = "huggingface"
     preprocess: str = "raw"
+    trust_remote_code: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
