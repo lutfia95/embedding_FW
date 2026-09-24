@@ -10,7 +10,7 @@ from noisy_seq_analyser import (
     collect_rows,
     discover_noisy_fastas,
     load_noisy_sequences,
-    select_reference,
+    select_references,
     write_csv,
 )
 from plms_framework import Pipeline
@@ -29,9 +29,9 @@ def test_deterministic_reference_to_noisy_scores(tmp_path: Path) -> None:
     write_fasta(noisy_directory / "b.faa", "protein one", "MKTAYIAQ")
     write_fasta(noisy_directory / "a.fasta", "protein one", "MKTAYIAK")
 
-    reference = select_reference(reference_path, None)
+    reference = select_references(reference_path, None)
     paths = discover_noisy_fastas(noisy_directory, reference_path)
-    noisy = load_noisy_sequences(paths, reference.id)
+    noisy = load_noisy_sequences(paths, {reference[0].id})
     request = build_embedding_request(
         reference,
         noisy,
@@ -60,14 +60,43 @@ def test_missing_matching_header_is_rejected(tmp_path: Path) -> None:
     noisy_path = tmp_path / "noisy.fasta"
     write_fasta(noisy_path, "different", "MKTAYIAK")
 
-    with pytest.raises(ValidationError, match="found 0"):
-        load_noisy_sequences([noisy_path], "wanted")
+    with pytest.raises(ValidationError, match="No headers from the reference"):
+        load_noisy_sequences([noisy_path], {"wanted"})
 
 
-def test_multirecord_reference_requires_header(tmp_path: Path) -> None:
+def test_multirecord_reference_defaults_to_all_records(tmp_path: Path) -> None:
     reference_path = tmp_path / "reference.fasta"
     reference_path.write_text(">first\nAAAA\n>second\nCCCC\n", encoding="utf-8")
 
-    with pytest.raises(ValidationError, match="use --header"):
-        select_reference(reference_path, None)
-    assert select_reference(reference_path, "second").sequence == "CCCC"
+    assert [record.id for record in select_references(reference_path, None)] == [
+        "first",
+        "second",
+    ]
+    assert select_references(reference_path, "second")[0].sequence == "CCCC"
+
+
+def test_multiple_headers_match_per_file(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.fasta"
+    noisy_path = tmp_path / "noisy.fasta"
+    reference_path.write_text(">first\nAAAA\n>second\nCCCC\n", encoding="utf-8")
+    noisy_path.write_text(">first\nAAAT\n>second\nCCCT\n", encoding="utf-8")
+    references = select_references(reference_path, None)
+    noisy = load_noisy_sequences([noisy_path], {"first", "second"})
+
+    request = build_embedding_request(
+        references,
+        noisy,
+        models=("reference-deterministic-v1",),
+        device="cpu",
+        precision="auto",
+    )
+    rows = collect_rows(
+        references,
+        noisy,
+        Pipeline().embed(request),
+        tmp_path,
+    )
+
+    assert [row["fasta_header"] for row in rows] == ["first", "second"]
+    assert [row["noisy_file"] for row in rows] == ["noisy.fasta", "noisy.fasta"]
+    assert all(row["sequence.sequence_identity"] < 1.0 for row in rows)

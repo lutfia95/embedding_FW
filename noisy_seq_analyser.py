@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Score noisy protein FASTA sequences against one reference sequence.
+"""Score matching noisy FASTA sequences against reference FASTA records.
 
-Each FASTA file in ``NOISY_FASTA_DIR`` must contain exactly one record whose
-full header matches the selected reference header.  All sequences are embedded
-in one batch and the reference-to-noisy scores are written to one CSV file.
+Records are matched by their full FASTA header.  By default, every reference
+record is matched against the records with the same header in each FASTA file
+in ``NOISY_FASTA_DIR``.  All matched sequences are embedded in one batch and
+scores are written to one CSV file.
 
 Example:
 
@@ -59,10 +60,11 @@ VECTOR_METRIC_NAMES = (
 
 @dataclass(frozen=True)
 class NoisySequence:
-    """A selected noisy FASTA record and its safe framework identifier."""
+    """A matched noisy FASTA record and its safe framework identifier."""
 
     path: Path
     internal_id: str
+    header: str
     sequence: str
 
 
@@ -78,23 +80,24 @@ def read_fasta(path: Path) -> tuple[ProteinSequence, ...]:
         raise ValidationError(f"Invalid FASTA file {path}: {exc}") from exc
 
 
-def select_reference(path: Path, requested_header: str | None) -> ProteinSequence:
+def select_references(path: Path, requested_header: str | None) -> tuple[ProteinSequence, ...]:
     records = read_fasta(path)
+    headers = [record.id for record in records]
+    duplicates = sorted({header for header in headers if headers.count(header) > 1})
+    if duplicates:
+        raise ValidationError(
+            f"Reference FASTA {path} contains duplicate headers: {', '.join(duplicates)}"
+        )
     if requested_header is None:
-        if len(records) != 1:
-            raise ValidationError(
-                f"Reference FASTA {path} contains {len(records)} records; "
-                "use --header to select one by its full FASTA header"
-            )
-        return records[0]
+        return records
 
-    matches = [record for record in records if record.id == requested_header]
+    matches = tuple(record for record in records if record.id == requested_header)
     if len(matches) != 1:
         raise ValidationError(
             f"Expected exactly one reference record with header {requested_header!r} "
             f"in {path}, found {len(matches)}"
         )
-    return matches[0]
+    return matches
 
 
 def discover_noisy_fastas(directory: Path, reference_path: Path) -> list[Path]:
@@ -119,46 +122,66 @@ def discover_noisy_fastas(directory: Path, reference_path: Path) -> list[Path]:
     return paths
 
 
-def load_noisy_sequences(paths: list[Path], header: str) -> list[NoisySequence]:
+def load_noisy_sequences(
+    paths: list[Path], reference_headers: set[str]
+) -> list[NoisySequence]:
     noisy_sequences: list[NoisySequence] = []
-    for index, path in enumerate(paths, start=1):
-        matches = [record for record in read_fasta(path) if record.id == header]
-        if len(matches) != 1:
-            raise ValidationError(
-                f"Expected exactly one record with header {header!r} in {path}, "
-                f"found {len(matches)}"
-            )
-        noisy_sequences.append(
-            NoisySequence(
-                path=path,
-                internal_id=f"noisy_{index:06d}",
-                sequence=matches[0].sequence,
-            )
+    for path in paths:
+        records = read_fasta(path)
+        headers = [record.id for record in records]
+        duplicates = sorted(
+            {
+                header
+                for header in headers
+                if header in reference_headers and headers.count(header) > 1
+            }
         )
+        if duplicates:
+            raise ValidationError(
+                f"Noisy FASTA {path} contains duplicate matching headers: "
+                f"{', '.join(duplicates)}"
+            )
+        for record in records:
+            if record.id in reference_headers:
+                noisy_sequences.append(
+                    NoisySequence(
+                        path=path,
+                        internal_id=f"noisy_{len(noisy_sequences) + 1:09d}",
+                        header=record.id,
+                        sequence=record.sequence,
+                    )
+                )
+    if not noisy_sequences:
+        raise ValidationError("No headers from the reference FASTA were found in the noisy files")
     return noisy_sequences
 
 
 def build_embedding_request(
-    reference: ProteinSequence,
+    references: tuple[ProteinSequence, ...],
     noisy_sequences: list[NoisySequence],
     *,
     models: tuple[str, ...],
     device: str,
     precision: str,
 ):
+    reference_ids = {
+        reference.id: f"reference_{index:06d}"
+        for index, reference in enumerate(references, start=1)
+    }
     sequences = [
         {
-            "id": "reference",
+            "id": reference_ids[reference.id],
             "sequence": reference.sequence,
             "metadata": {"fasta_header": reference.id, "role": "reference"},
         }
+        for reference in references
     ]
     sequences.extend(
         {
             "id": item.internal_id,
             "sequence": item.sequence,
             "metadata": {
-                "fasta_header": reference.id,
+                "fasta_header": item.header,
                 "source_file": item.path.name,
                 "role": "noisy",
             },
@@ -206,10 +229,11 @@ def add_model_scores(
     *,
     model_id: str,
     representations: dict[tuple[str, str], list],
+    reference_id: str,
     target_id: str,
 ) -> None:
     for method in ("mean", "max"):
-        reference_values = representations[(method, "reference")]
+        reference_values = representations[(method, reference_id)]
         target_values = representations[(method, target_id)]
         for metric_name in VECTOR_METRIC_NAMES:
             row[f"{model_id}.{method}.{metric_name}"] = VECTOR_METRICS[metric_name](
@@ -217,7 +241,7 @@ def add_model_scores(
             )
 
     similarity = residue_similarity(
-        representations[("residue", "reference")],
+        representations[("residue", reference_id)],
         representations[("residue", target_id)],
     )
     global_alignment = align_similarity(similarity, local=False)
@@ -231,7 +255,7 @@ def add_model_scores(
 
 
 def collect_rows(
-    reference: ProteinSequence,
+    references: tuple[ProteinSequence, ...],
     noisy_sequences: list[NoisySequence],
     embedded: dict[str, Any],
     noisy_directory: Path,
@@ -241,8 +265,14 @@ def collect_rows(
         for model_id, output in embedded["models"].items()
     }
     rows: list[dict[str, Any]] = []
-    reference_sequence = "".join(reference.sequence.split()).upper()
+    reference_by_header = {reference.id: reference for reference in references}
+    reference_ids = {
+        reference.id: f"reference_{index:06d}"
+        for index, reference in enumerate(references, start=1)
+    }
     for item in noisy_sequences:
+        reference = reference_by_header[item.header]
+        reference_sequence = "".join(reference.sequence.split()).upper()
         try:
             source_file = str(item.path.relative_to(noisy_directory))
         except ValueError:
@@ -250,7 +280,7 @@ def collect_rows(
         noisy_sequence = "".join(item.sequence.split()).upper()
         row: dict[str, Any] = {
             "noisy_file": source_file,
-            "fasta_header": reference.id,
+            "fasta_header": item.header,
             "reference_length": len(reference_sequence),
             "noisy_length": len(noisy_sequence),
         }
@@ -260,6 +290,7 @@ def collect_rows(
                 row,
                 model_id=model_id,
                 representations=representations,
+                reference_id=reference_ids[item.header],
                 target_id=item.internal_id,
             )
         rows.append(row)
@@ -289,7 +320,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--header",
-        help="Full FASTA header to select when the reference contains multiple records",
+        nargs="?",
+        const="",
+        help="Optionally select one full reference header; omit or leave bare to process all",
     )
     parser.add_argument(
         "--output",
@@ -326,28 +359,32 @@ def main() -> int:
         if not reference_path.is_file():
             raise ValidationError(f"Reference FASTA file does not exist: {args.reference_fasta}")
         noisy_directory = args.noisy_fasta_dir.resolve()
-        reference = select_reference(reference_path, args.header)
+        requested_header = args.header or None
+        references = select_references(reference_path, requested_header)
         noisy_paths = discover_noisy_fastas(noisy_directory, reference_path)
-        noisy_sequences = load_noisy_sequences(noisy_paths, reference.id)
+        noisy_sequences = load_noisy_sequences(
+            noisy_paths, {reference.id for reference in references}
+        )
 
         print(
-            f"Matched header {reference.id!r} in {len(noisy_sequences)} noisy FASTA files.",
+            f"Loaded {len(references)} reference record(s) and "
+            f"{len(noisy_sequences)} matching noisy record(s).",
             file=sys.stderr,
         )
         print(
-            f"Embedding {len(noisy_sequences) + 1} sequences with: "
+            f"Embedding {len(references) + len(noisy_sequences)} sequences with: "
             f"{', '.join(args.models)}",
             file=sys.stderr,
         )
         request = build_embedding_request(
-            reference,
+            references,
             noisy_sequences,
             models=tuple(args.models),
             device=args.device,
             precision=args.precision,
         )
         embedded = Pipeline().embed(request)
-        rows = collect_rows(reference, noisy_sequences, embedded, noisy_directory)
+        rows = collect_rows(references, noisy_sequences, embedded, noisy_directory)
         write_csv(rows, args.output)
     except FrameworkError as exc:
         print(json.dumps(exc.as_dict(), indent=2, sort_keys=True), file=sys.stderr)
