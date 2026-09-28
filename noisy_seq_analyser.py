@@ -5,11 +5,20 @@ Records are matched by their full FASTA header.  By default, every reference
 record is matched against the records with the same header in each FASTA file
 in ``NOISY_FASTA_DIR``. Embedding runs in bounded batches; CPU worker processes
 score matched pairs using a temporary disk cache. Scores go to one CSV file.
+With --model_wise, --output is a directory containing one CSV per model.
 
 Example:
 
     python3.12 noisy_seq_analyser.py reference.fasta noisy_fastas \
         --output noisy_sequence_scores.csv
+
+    python3.12 noisy_seq_analyser.py reference.fasta noisy_fastas \
+        --model_wise --output model_scores --cache-dir model_cache
+
+In model-wise mode, each CSV contains reference-to-noisy scores from just one
+model, plus sequence metrics. The entire supplied cache directory is emptied
+after every model (including on failure), so use a dedicated disposable folder.
+Checkpoint downloads are directed there; existing global caches are unchanged.
 
 The default model and metric choices mirror the pairwise scores demonstrated by
 ``python_ex.py``.  The first run may download the ESM-2 and ESM-C checkpoints.
@@ -24,15 +33,18 @@ import logging
 import mmap
 import multiprocessing
 import os
+import shutil
 import sys
 import tempfile
 import time
 from array import array
 from collections import Counter
+from contextlib import contextmanager
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from plms_framework import Pipeline
 from plms_framework.errors import FrameworkError, ValidationError
@@ -499,7 +511,10 @@ def score_tasks(tasks, rows, workers, model_id):
 
 
 def run_batched_analysis(request, references, noisy_sequences, noisy_directory, *,
-                         workers, batch_size, max_batch_tokens, torch_threads, cache_dir=None):
+                         workers, batch_size, max_batch_tokens, torch_threads, cache_dir=None,
+                         model_wise=False, output_dir=None):
+    if model_wise and output_dir is None:
+        raise ValidationError("Model-wise analysis requires an output directory")
     reference_ids = {
         reference.id: f"reference_{number:06d}"
         for number, reference in enumerate(references, start=1)
@@ -514,6 +529,7 @@ def run_batched_analysis(request, references, noisy_sequences, noisy_directory, 
         }
         for item in noisy_sequences
     ]
+    base_rows = rows
     pipeline = Pipeline()
     # The deterministic adapter needs no torch installation.
     if any(pipeline.registry.manifest(model).backend != "built_in"
@@ -530,8 +546,10 @@ def run_batched_analysis(request, references, noisy_sequences, noisy_directory, 
         workers, batch_size, max_batch_tokens, torch_threads,
     )
     for number, model in enumerate(request.models, start=1):
+        if model_wise:
+            rows = [dict(row) for row in base_rows]
         LOGGER.info("Model %d/%d: %s", number, len(request.models), model)
-        with tempfile.TemporaryDirectory(prefix="noisy-embeddings-", dir=cache_dir) as scratch:
+        with model_cache(cache_dir, disposable=model_wise) as scratch:
             cache_path = Path(scratch) / "embeddings.bin"
             LOGGER.info("Temporary embedding cache: %s", cache_path)
             # The general registry constructs fresh adapters on each lookup.
@@ -551,14 +569,72 @@ def run_batched_analysis(request, references, noisy_sequences, noisy_directory, 
                 (
                     i, str(cache_path), model_id, index[reference_ids[item.header]],
                     index[item.internal_id],
-                    (reference_by_header[item.header], item.sequence) if number == 1 else None,
+                    (reference_by_header[item.header], item.sequence)
+                    if model_wise or number == 1 else None,
                 )
                 for i, item in enumerate(noisy_sequences)
             )
             LOGGER.info("%s: scoring %d pairs with %d workers", model_id, len(rows), workers)
             score_tasks(tasks, rows, workers, model_id)
+            if model_wise:
+                write_csv(rows, Path(output_dir) / f"{quote(model_id, safe='')}.csv")
         LOGGER.info("%s complete; temporary embedding cache removed", model_id)
     return rows
+
+
+@contextmanager
+def model_cache(cache_dir, *, disposable=False):
+    """Keep checkpoint downloads and embeddings in a disposable cache per model.
+
+    Set download locations before the lazy backend imports. Each model reuses
+    the same paths because Hugging Face reads these variables at import time.
+    """
+    if not disposable:
+        with tempfile.TemporaryDirectory(prefix="noisy-embeddings-", dir=cache_dir) as scratch:
+            yield scratch
+        return
+    if cache_dir is None:
+        raise ValidationError("Model-wise analysis requires a cache directory")
+    cache_dir = Path(cache_dir).resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    locations = {
+        "HF_HOME": str(cache_dir),
+        "HF_HUB_CACHE": str(cache_dir / "hub"),
+        "HUGGINGFACE_HUB_CACHE": str(cache_dir / "hub"),
+        "TRANSFORMERS_CACHE": str(cache_dir / "hub"),
+        "HF_XET_CACHE": str(cache_dir / "xet"),
+        "HF_MODULES_CACHE": str(cache_dir / "modules"),
+        "TORCH_HOME": str(cache_dir / "torch"),
+    }
+    previous = {key: os.environ.get(key) for key in locations}
+    os.environ.update(locations)
+    try:
+        yield str(cache_dir)
+    finally:
+        try:
+            for path in cache_dir.iterdir():
+                if path.is_symlink() or not path.is_dir():
+                    path.unlink()
+                else:
+                    shutil.rmtree(path)
+            LOGGER.info("Emptied model cache: %s", cache_dir)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
+def validate_model_cache(cache_dir, reference_path, noisy_directory, output_dir):
+    cache = cache_dir.resolve()
+    protected = [reference_path.resolve(), noisy_directory.resolve(), output_dir.resolve(),
+                 Path(__file__).resolve(), Path.cwd().resolve(), Path.home().resolve()]
+    if any(path == cache or cache in path.parents for path in protected):
+        raise ValidationError(
+            "--cache-dir must be a dedicated disposable directory, separate from "
+            "inputs, output, source code, the working directory and home directory"
+        )
 
 
 def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
@@ -601,8 +677,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("noisy_sequence_scores.csv"),
-        help="Single output CSV path (default: noisy_sequence_scores.csv)",
+        help="CSV path, or directory with --model_wise "
+             "(defaults: noisy_sequence_scores.csv / noisy_sequence_scores)",
+    )
+    parser.add_argument(
+        "--model_wise", "--model-wise", action="store_true",
+        help="Score and save each model separately as <model-id>.csv in --output; "
+             "remove its temporary cache before starting the next model",
     )
     parser.add_argument(
         "--models",
@@ -642,7 +723,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cache-dir", type=Path,
-        help="Parent for temporary embedding caches (default: system temporary directory)",
+        help="Parent for temporary embeddings; with --model_wise, a disposable directory "
+             "for checkpoints and embeddings whose entire contents are deleted after each model "
+             "(default: system temporary directory)",
     )
     parser.add_argument(
         "--log-level",
@@ -650,7 +733,11 @@ def parse_args() -> argparse.Namespace:
         default="INFO",
         help="Logging verbosity (default: INFO; use DEBUG for missing-header examples)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.output is None:
+        args.output = Path("noisy_sequence_scores" if args.model_wise
+                           else "noisy_sequence_scores.csv")
+    return args
 
 
 def main() -> int:
@@ -665,7 +752,7 @@ def main() -> int:
     LOGGER.info("Starting noisy sequence analysis")
     LOGGER.info("Reference FASTA: %s", args.reference_fasta)
     LOGGER.info("Noisy FASTA directory: %s", args.noisy_fasta_dir)
-    LOGGER.info("Output CSV: %s", args.output)
+    LOGGER.info("Output %s: %s", "directory" if args.model_wise else "CSV", args.output)
     LOGGER.info("Models: %s", ", ".join(args.models))
     try:
         reference_path = args.reference_fasta.resolve()
@@ -696,15 +783,25 @@ def main() -> int:
             device=args.device,
             precision=args.precision,
         )
-        if args.cache_dir is not None:
-            args.cache_dir.mkdir(parents=True, exist_ok=True)
-        rows = run_batched_analysis(
-            request, references, noisy_sequences, noisy_directory,
-            workers=args.workers, batch_size=args.batch_size,
-            max_batch_tokens=args.max_batch_tokens, torch_threads=args.torch_threads,
-            cache_dir=args.cache_dir,
-        )
-        write_csv(rows, args.output)
+        with tempfile.TemporaryDirectory(prefix="noisy-model-cache-") as default_cache:
+            if args.model_wise:
+                args.cache_dir = args.cache_dir or Path(default_cache)
+                validate_model_cache(
+                    args.cache_dir, reference_path, noisy_directory, args.output,
+                )
+                if args.output.exists() and not args.output.is_dir():
+                    raise ValidationError("--output must be a directory with --model_wise")
+            if args.cache_dir is not None:
+                args.cache_dir.mkdir(parents=True, exist_ok=True)
+            rows = run_batched_analysis(
+                request, references, noisy_sequences, noisy_directory,
+                workers=args.workers, batch_size=args.batch_size,
+                max_batch_tokens=args.max_batch_tokens, torch_threads=args.torch_threads,
+                cache_dir=args.cache_dir,
+                model_wise=args.model_wise, output_dir=args.output if args.model_wise else None,
+            )
+        if not args.model_wise:
+            write_csv(rows, args.output)
     except FrameworkError as exc:
         LOGGER.error("Analysis stopped: %s", exc)
         print(json.dumps(exc.as_dict(), indent=2, sort_keys=True), file=sys.stderr)
@@ -715,7 +812,7 @@ def main() -> int:
 
     LOGGER.info(
         "Analysis complete: wrote %d comparison rows to %s in %.2f seconds",
-        len(rows),
+        len(rows) * (len(request.models) if args.model_wise else 1),
         args.output.resolve(),
         time.perf_counter() - started,
     )

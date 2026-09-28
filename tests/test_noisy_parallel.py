@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,13 +16,81 @@ from noisy_seq_analyser import (
     collect_rows,
     embedding_batches,
     run_batched_analysis,
+    model_cache,
+    validate_model_cache,
 )
 from plms_framework import Pipeline
 from plms_framework.adapters.deterministic import DeterministicAdapter
 from plms_framework.models import ProteinSequence
+from plms_framework.registry import ModelRegistry, default_registry
+from plms_framework.errors import ValidationError
 
 
 class ParallelScoringTests(unittest.TestCase):
+    def test_model_wise_saves_each_model_before_next_and_clears_cache(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()
+            output = root / "scores"
+            references = (ProteinSequence("protein", "ACD"),)
+            noisy = [NoisySequence(root / "a.fa", "noisy_1", "protein", "ACE")]
+            registry = ModelRegistry()
+            manifest = default_registry.manifest("reference-deterministic-v1")
+
+            def factory(model_manifest):
+                if model_manifest.id == "second":
+                    self.assertTrue((output / "first.csv").is_file())
+                    self.assertEqual(list(cache.iterdir()), [])
+                (cache / "checkpoint.bin").write_bytes(b"fake checkpoint")
+                self.assertEqual(os.environ["HF_HUB_CACHE"], str(cache.resolve() / "hub"))
+                return DeterministicAdapter(model_manifest)
+
+            for name in ("first", "second"):
+                registry.register(replace(manifest, id=name, aliases=()), factory)
+            request = build_embedding_request(
+                references, noisy, models=("first", "second"), device="cpu", precision="auto",
+            )
+            with patch("plms_framework.pipeline.default_registry", registry):
+                run_batched_analysis(
+                    request, references, noisy, root, workers=1, batch_size=2,
+                    max_batch_tokens=20, torch_threads=1, cache_dir=cache,
+                    model_wise=True, output_dir=output,
+                )
+            self.assertEqual(list(cache.iterdir()), [])
+            self.assertEqual(sorted(p.name for p in output.iterdir()), ["first.csv", "second.csv"])
+            for name, other in (("first", "second"), ("second", "first")):
+                with (output / f"{name}.csv").open() as handle:
+                    rows = list(csv.DictReader(handle))
+                self.assertEqual(len(rows), 1)
+                self.assertIn("sequence.sequence_identity", rows[0])
+                self.assertIn(f"{name}.mean.cosine_similarity", rows[0])
+                self.assertFalse(any(key.startswith(f"{other}.") for key in rows[0]))
+
+    def test_disposable_cache_cleanup_on_failure_preserves_symlink_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            target = root / "keep.txt"
+            target.write_text("keep")
+            before = os.environ.get("HF_HOME")
+            with self.assertRaisesRegex(RuntimeError, "failed"):
+                with model_cache(cache, disposable=True):
+                    (cache / "hub").mkdir()
+                    (cache / "hub" / "weights").write_text("checkpoint")
+                    (cache / "link").symlink_to(target)
+                    raise RuntimeError("failed")
+            self.assertEqual(list(cache.iterdir()), [])
+            self.assertEqual(target.read_text(), "keep")
+            self.assertEqual(os.environ.get("HF_HOME"), before)
+
+    def test_reject_cache_containing_input_or_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for cache in (root, root / "noisy", root / "output"):
+                with self.assertRaises(ValidationError):
+                    validate_model_cache(cache, root / "ref.fa", root / "noisy", root / "output")
+
     def test_cli_writes_one_csv_with_multiple_workers(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -47,6 +116,18 @@ class ParallelScoringTests(unittest.TestCase):
             self.assertEqual(rows[0]["fasta_header"], "second")
             self.assertEqual(float(rows[0]["sequence.sequence_identity"]), 1.0)
             self.assertIn("2 scoring workers", result.stderr)
+            self.assertEqual(list((root / "scratch").iterdir()), [])
+            model_output = root / "model_scores"
+            command = result.args.copy()
+            command[command.index("--output") + 1] = str(model_output)
+            command.append("--model_wise")
+            result = subprocess.run(
+                command, env={**os.environ, "PYTHONPATH": str(repository / "src")},
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with (model_output / "reference-deterministic-v1.csv").open(newline="") as handle:
+                self.assertEqual(list(csv.DictReader(handle)), rows)
             self.assertEqual(list((root / "scratch").iterdir()), [])
 
     def test_batches_obey_size_and_padding_budget(self):
