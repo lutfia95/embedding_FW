@@ -3,8 +3,9 @@
 
 Records are matched by their full FASTA header.  By default, every reference
 record is matched against the records with the same header in each FASTA file
-in ``NOISY_FASTA_DIR``. Embedding runs in bounded batches; CPU worker processes
-score matched pairs using a temporary disk cache. Scores go to one CSV file.
+in ``NOISY_FASTA_DIR``. Worker threads embed and score complete pairs in memory.
+Each completed pair is flushed to a model CSV immediately; no embedding arrays
+are written to disk.
 With --model_wise, --output is a directory containing one CSV per model.
 
 Example:
@@ -27,27 +28,28 @@ The default model and metric choices mirror the pairwise scores demonstrated by
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
+import gc
 import json
 import logging
-import mmap
-import multiprocessing
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import time
-from array import array
 from collections import Counter
-from contextlib import contextmanager
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import Lock, local
 from typing import Any
 from urllib.parse import quote
 
 from plms_framework import Pipeline
-from plms_framework.errors import FrameworkError, ValidationError
+from plms_framework.errors import FrameworkError, ResourceLimitError, ValidationError
 from plms_framework.metrics import (
     SEQUENCE_METRICS,
     VECTOR_METRICS,
@@ -61,8 +63,20 @@ from plms_framework.registry import ModelRegistry
 from plms_framework.sequences import parse_fasta
 from plms_framework.serialization import request_from_dict
 
-
-DEFAULT_MODELS = ("esm2-8m", "esm2-35m", "esm2-150m", "esm2-650m", "esm2-3b", "esm2-15b", "esm1b-650m", "esm1v-650m-1", "esm1v-650m-2", "esm1v-650m-3", "esm1v-650m-4", "esm1v-650m-5")
+DEFAULT_MODELS = (
+    "esm2-8m",
+    "esm2-35m",
+    "esm2-150m",
+    "esm2-650m",
+    "esm2-3b",
+    "esm2-15b",
+    "esm1b-650m",
+    "esm1v-650m-1",
+    "esm1v-650m-2",
+    "esm1v-650m-3",
+    "esm1v-650m-4",
+    "esm1v-650m-5",
+)
 LOGGER = logging.getLogger("noisy_seq_analyser")
 FASTA_SUFFIXES = frozenset({".fa", ".faa", ".fas", ".fasta", ".fsa"})
 SEQUENCE_METRIC_NAMES = (
@@ -148,9 +162,7 @@ def discover_noisy_fastas(directory: Path, reference_path: Path) -> list[Path]:
     return paths
 
 
-def load_noisy_sequences(
-    paths: list[Path], reference_headers: set[str]
-) -> list[NoisySequence]:
+def load_noisy_sequences(paths: list[Path], reference_headers: set[str]) -> list[NoisySequence]:
     noisy_sequences: list[NoisySequence] = []
     LOGGER.info(
         "Scanning %d noisy FASTA files for %d reference headers",
@@ -171,8 +183,7 @@ def load_noisy_sequences(
         if duplicates:
             LOGGER.error("Duplicate reference headers found in %s: %s", path, ", ".join(duplicates))
             raise ValidationError(
-                f"Noisy FASTA {path} contains duplicate matching headers: "
-                f"{', '.join(duplicates)}"
+                f"Noisy FASTA {path} contains duplicate matching headers: {', '.join(duplicates)}"
             )
         matched_records = [record for record in records if record.id in reference_headers]
         matched_headers = {record.id for record in matched_records}
@@ -263,8 +274,7 @@ def build_embedding_request(
 
 def index_representations(output: dict[str, Any]) -> dict[tuple[str, str], list]:
     return {
-        (item["method"], item["sequence_id"]): item["values"]
-        for item in output["representations"]
+        (item["method"], item["sequence_id"]): item["values"] for item in output["representations"]
     }
 
 
@@ -314,8 +324,7 @@ def collect_rows(
     noisy_directory: Path,
 ) -> list[dict[str, Any]]:
     model_representations = {
-        model_id: index_representations(output)
-        for model_id, output in embedded["models"].items()
+        model_id: index_representations(output) for model_id, output in embedded["models"].items()
     }
     rows: list[dict[str, Any]] = []
     reference_by_header = {reference.id: reference for reference in references}
@@ -363,7 +372,7 @@ def available_cpus() -> int:
     """Respect CPU affinity where available (e.g. a scheduler allocation)."""
     if hasattr(os, "sched_getaffinity"):
         return max(1, len(os.sched_getaffinity(0)))
-    return (getattr(os, "process_cpu_count", os.cpu_count)() or 1)
+    return getattr(os, "process_cpu_count", os.cpu_count)() or 1
 
 
 def embedding_batches(sequences, batch_size: int, max_batch_tokens: int):
@@ -372,9 +381,7 @@ def embedding_batches(sequences, batch_size: int, max_batch_tokens: int):
     batch = []
     for sequence in ordered:
         length = len("".join(sequence.sequence.split())) + 2
-        if batch and (
-            len(batch) >= batch_size or (len(batch) + 1) * length > max_batch_tokens
-        ):
+        if batch and (len(batch) >= batch_size or (len(batch) + 1) * length > max_batch_tokens):
             yield tuple(batch)
             batch = []
         batch.append(sequence)
@@ -382,215 +389,404 @@ def embedding_batches(sequences, batch_size: int, max_batch_tokens: int):
         yield tuple(batch)
 
 
-def cache_model_embeddings(pipeline, request, cache_path, batch_size, max_batch_tokens):
-    """Write exact float64 values once; workers map only the requested pair."""
-    batches = list(embedding_batches(request.sequences, batch_size, max_batch_tokens))
-    index = {}
-    started = time.perf_counter()
-    completed = 0
-    with cache_path.open("wb") as handle:
-        for number, sequences in enumerate(batches, start=1):
-            LOGGER.info(
-                "%s embedding batch %d/%d: %d sequences, longest=%d residues",
-                request.models[0], number, len(batches), len(sequences),
-                max(len("".join(item.sequence.split())) for item in sequences),
-            )
-            embedded = pipeline.embed(replace(request, sequences=sequences))
-            model_id, output = next(iter(embedded["models"].items()))
-            for item in output["representations"]:
-                values = item["values"]
-                flattened = (
-                    (value for row in values for value in row)
-                    if item["method"] == "residue" else iter(values)
-                )
-                data = array("d", flattened)
-                descriptor = (handle.tell(), len(data), tuple(item["shape"]))
-                data.tofile(handle)
-                index.setdefault(item["sequence_id"], {})[item["method"]] = descriptor
-            completed += len(sequences)
-            LOGGER.info(
-                "%s embedded %d/%d sequences in %.1fs; cache %.1f MiB",
-                model_id, completed, len(request.sequences), time.perf_counter() - started,
-                handle.tell() / 1024**2,
-            )
-            del embedded, output
-    return model_id, index
+def model_score_fields(model_id):
+    return [
+        *(
+            f"{model_id}.{method}.{metric}"
+            for method in ("mean", "max")
+            for metric in VECTOR_METRIC_NAMES
+        ),
+        *(
+            f"{model_id}.residue.{metric}"
+            for metric in ("global_alignment", "local_alignment", "best_match", "optimal_transport")
+        ),
+    ]
 
 
-def _score_mapped_pair(mapped, model_id, reference_spec, target_spec):
+class ScoreOutput:
+    """Flush model CSVs immediately; optionally merge only scalar scores on disk."""
+
+    def __init__(self, path, model_ids, model_wise):
+        self.path = Path(path)
+        self.model_ids = model_ids
+        self.model_wise = model_wise
+        self.directory = (
+            self.path if model_wise else self.path.with_name(self.path.stem + ".models")
+        )
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.scratch = None
+        self.database = None
+        self.handle = None
+        self.metadata = ["noisy_file", "fasta_header", "reference_length", "noisy_length"]
+        self.baselines = [f"sequence.{name}" for name in SEQUENCE_METRIC_NAMES]
+        if not model_wise:
+            # Scores only, never embeddings. This bounds memory during wide CSV merging.
+            self.scratch = tempfile.TemporaryDirectory(prefix=".score-merge-", dir=self.path.parent)
+            self.database = sqlite3.connect(Path(self.scratch.name) / "scores.sqlite")
+            self.database.execute(
+                "CREATE TABLE scores (pair_index INTEGER, model_index INTEGER, data TEXT, "
+                "PRIMARY KEY (pair_index, model_index))"
+            )
+
+    def start_model(self, model_id):
+        self.finish_model()
+        path = self.directory / f"{quote(model_id, safe='')}.csv"
+        self.handle = path.open("w", encoding="utf-8", newline="")
+        fields = [
+            "pair_index",
+            *self.metadata,
+            *self.baselines,
+            *model_score_fields(model_id),
+            f"{model_id}.status",
+            f"{model_id}.error",
+        ]
+        self.writer = csv.DictWriter(self.handle, fieldnames=fields)
+        self.writer.writeheader()
+        self.handle.flush()
+        LOGGER.info("Streaming pair scores to %s", path)
+
+    def write(self, pair_index, model_index, row):
+        model_id = self.model_ids[model_index]
+        recorded = {**row, f"{model_id}.status": row.get(f"{model_id}.status", "ok")}
+        self.writer.writerow({"pair_index": pair_index, **recorded})
+        self.handle.flush()
+        if self.database is not None:
+            self.database.execute(
+                "INSERT INTO scores VALUES (?, ?, ?)",
+                (pair_index, model_index, json.dumps(recorded)),
+            )
+
+    def finish_model(self):
+        if self.handle is not None:
+            self.handle.close()
+            self.handle = None
+        if self.database is not None:
+            self.database.commit()
+
+    def finalize(self):
+        self.finish_model()
+        if self.database is None:
+            return
+        fields = ["pair_index", *self.metadata, *self.baselines]
+        for model_id in self.model_ids:
+            fields.extend(
+                [*model_score_fields(model_id), f"{model_id}.status", f"{model_id}.error"]
+            )
+        temporary = self.path.with_name(f".{self.path.name}.tmp")
+        with temporary.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            previous = None
+            merged = {}
+            for pair_index, data in self.database.execute(
+                "SELECT pair_index, data FROM scores ORDER BY pair_index, model_index"
+            ):
+                if previous is not None and pair_index != previous:
+                    writer.writerow(merged)
+                    merged = {}
+                merged.update(json.loads(data))
+                merged["pair_index"] = pair_index
+                previous = pair_index
+            if previous is not None:
+                writer.writerow(merged)
+        temporary.replace(self.path)
+
+    def close(self):
+        self.finish_model()
+        if self.database is not None:
+            self.database.close()
+            self.database = None
+        if self.scratch is not None:
+            self.scratch.cleanup()
+
+
+def pair_row(item, reference, noisy_directory):
+    try:
+        source = str(item.path.relative_to(noisy_directory))
+    except ValueError:
+        source = str(item.path)
+    return {
+        "noisy_file": source,
+        "fasta_header": item.header,
+        "reference_length": len("".join(reference.sequence.split())),
+        "noisy_length": len("".join(item.sequence.split())),
+    }
+
+
+def cpu_worker_adapter(adapter):
+    """Separate tokenizer/module caches per CPU thread while sharing model weights."""
+    model = getattr(adapter, "_model", None)
+    if model is None:
+        return adapter  # The built-in deterministic adapter has no mutable model state.
+    shared_tensors = {id(tensor): tensor for tensor in (*model.parameters(), *model.buffers())}
+    return copy.deepcopy(adapter, shared_tensors)
+
+
+def score_in_memory_pair(
+    item,
+    reference,
+    request,
+    pipeline,
+    noisy_directory,
+    *,
+    batch_size,
+    max_batch_tokens,
+    inference_lock,
+    long_sequences,
+):
+    """Only scalar scores escape this worker; pair embeddings are local temporaries."""
+    model_id = request.models[0]
+    row = pair_row(item, reference, noisy_directory)
+    manifest = pipeline.registry.manifest(model_id)
+    limit = manifest.max_native_length
+    if limit is not None and max(row["reference_length"], row["noisy_length"]) > limit:
+        error = ResourceLimitError(
+            f"Sequences exceed native length {limit}; truncation is forbidden",
+            context={"model": model_id, "header": item.header, "file": str(item.path)},
+        )
+        if long_sequences == "error":
+            raise error
+        row.update({f"{model_id}.status": "skipped_long_sequence", f"{model_id}.error": str(error)})
+        LOGGER.warning(
+            "Skipping %s pair %r in %s: %s", model_id, item.header, item.path.name, error
+        )
+        return row
+    target = ProteinSequence(item.internal_id, item.sequence)
+    same_sequence = (
+        "".join(reference.sequence.split()).upper() == "".join(item.sequence.split()).upper()
+    )
+    sequences = (reference,) if same_sequence else (reference, target)
     representations = {}
-    for sequence_id, spec in (("reference", reference_spec), ("target", target_spec)):
-        for method, (offset, size, shape) in spec.items():
-            view = memoryview(mapped)[offset:offset + size * array("d").itemsize].cast("d")
-            representations[(method, sequence_id)] = (
-                [view[i * shape[1]:(i + 1) * shape[1]] for i in range(shape[0])]
-                if method == "residue" else view
-            )
-    scores = {}
     try:
+        for batch in embedding_batches(sequences, batch_size, max_batch_tokens):
+            with inference_lock if inference_lock is not None else nullcontext():
+                embedded = pipeline.embed(replace(request, sequences=batch))
+            output = embedded["models"][model_id]
+            representations.update(index_representations(output))
+            del embedded, output
+        if same_sequence:
+            for method in ("mean", "max", "residue"):
+                representations[(method, target.id)] = representations[(method, reference.id)]
         add_model_scores(
-            scores, model_id=model_id, representations=representations,
-            reference_id="reference", target_id="target",
+            row,
+            model_id=model_id,
+            representations=representations,
+            reference_id=reference.id,
+            target_id=target.id,
         )
-        return scores
+        row.update(sequence_scores(reference.sequence, item.sequence))
+        return row
     finally:
-        # Release exported buffers before the caller closes the memory map,
-        # including when scoring raises an exception.
-        for values in representations.values():
-            if isinstance(values, list):
-                for row in values:
-                    row.release()
-            else:
-                values.release()
-        view.release()
+        representations.clear()
 
 
-def score_cached_pair(task):
-    """Spawn-safe worker: receives paths and offsets, never a model or full embeddings."""
-    row_index, cache_path, model_id, ref_spec, target_spec, baseline_sequences = task
-    try:
-        with open(cache_path, "rb") as handle:
-            with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
-                scores = _score_mapped_pair(mapped, model_id, ref_spec, target_spec)
-        if baseline_sequences is not None:
-            scores.update(sequence_scores(*baseline_sequences))
-        return row_index, scores
-    except Exception as exc:
-        raise RuntimeError(f"Scoring pair {row_index + 1} for {model_id} failed: {exc}") from exc
+def make_pair_worker(
+    adapter,
+    model_request,
+    reference_by_header,
+    noisy_directory,
+    *,
+    batch_size,
+    max_batch_tokens,
+    long_sequences,
+):
+    """Bind one model's state for its worker pool, independent of later models."""
+    thread_state = local()
+    clone_lock = Lock()
+    worker_adapters = []
+    accelerator = str(getattr(adapter, "_device", None) or "cpu") != "cpu"
+    inference_lock = Lock() if accelerator else None
 
-
-def score_tasks(tasks, rows, workers, model_id):
-    started = last_report = time.perf_counter()
-    completed = 0
-    total = len(rows)
-
-    def report():
-        elapsed = time.perf_counter() - started
-        rate = completed / max(elapsed, 1e-9)
-        LOGGER.info(
-            "%s scoring: %d/%d pairs, %.2f pairs/s, elapsed %.1fs, ETA %s",
-            model_id, completed, total, rate, elapsed,
-            f"{(total - completed) / rate:.1f}s" if rate else "pending first result",
+    def score(item):
+        if not hasattr(thread_state, "pipeline"):
+            with clone_lock:
+                worker_adapter = adapter if accelerator else cpu_worker_adapter(adapter)
+                if worker_adapter is not adapter:
+                    worker_adapters.append(worker_adapter)
+            worker_registry = ModelRegistry()
+            worker_registry.register(worker_adapter.manifest, lambda manifest: worker_adapter)
+            thread_state.pipeline = Pipeline(worker_registry)
+        return score_in_memory_pair(
+            item,
+            reference_by_header[item.header],
+            model_request,
+            thread_state.pipeline,
+            noisy_directory,
+            batch_size=batch_size,
+            max_batch_tokens=max_batch_tokens,
+            inference_lock=inference_lock,
+            long_sequences=long_sequences,
         )
 
-    if workers == 1:
-        for task in tasks:
-            row_index, scores = score_cached_pair(task)
-            rows[row_index].update(scores)
-            completed += 1
-            if time.perf_counter() - last_report >= 10 or completed == total:
-                report()
-                last_report = time.perf_counter()
-        return
-
-    # Spawn avoids inheriting initialized torch/CUDA state. Bound the queue so
-    # a large proteome does not create millions of pending futures.
-    with ProcessPoolExecutor(
-        max_workers=workers, mp_context=multiprocessing.get_context("spawn")
-    ) as pool:
-        iterator = iter(tasks)
-        pending = set()
-        exhausted = False
-        while pending or not exhausted:
-            while not exhausted and len(pending) < workers * 2:
-                try:
-                    pending.add(pool.submit(score_cached_pair, next(iterator)))
-                except StopIteration:
-                    exhausted = True
-            if not pending:
-                break
-            done, pending = wait(pending, timeout=10, return_when=FIRST_COMPLETED)
-            for future in done:
-                row_index, scores = future.result()
-                rows[row_index].update(scores)
-                completed += 1
-                LOGGER.debug("%s finished pair %d/%d", model_id, row_index + 1, total)
-            if time.perf_counter() - last_report >= 10 or completed == total:
-                report()
-                last_report = time.perf_counter()
+    return score, worker_adapters
 
 
-def run_batched_analysis(request, references, noisy_sequences, noisy_directory, *,
-                         workers, batch_size, max_batch_tokens, torch_threads, cache_dir=None,
-                         model_wise=False, output_dir=None):
-    if model_wise and output_dir is None:
-        raise ValidationError("Model-wise analysis requires an output directory")
-    reference_ids = {
-        reference.id: f"reference_{number:06d}"
+def run_batched_analysis(
+    request,
+    references,
+    noisy_sequences,
+    noisy_directory,
+    *,
+    workers,
+    batch_size,
+    max_batch_tokens,
+    torch_threads,
+    cache_dir=None,
+    output_path=None,
+    model_wise=False,
+    output_dir=None,
+    long_sequences="skip",
+):
+    """Send complete pairs to bounded threads, with no embedding cache on disk.
+
+    CLI runs stream scores and return the pair count. Calls without output_path
+    retain the legacy list-of-wide-score-rows return value for Python callers.
+    cache_dir is accepted for compatibility and is never used for embeddings.
+    """
+    if min(workers, batch_size, max_batch_tokens, torch_threads) < 1:
+        raise ValidationError(
+            "workers, batch_size, max_batch_tokens and torch_threads must be positive"
+        )
+    if long_sequences not in {"skip", "error"}:
+        raise ValidationError("long_sequences must be 'skip' or 'error'")
+    if not noisy_sequences:
+        raise ValidationError("No matched noisy pairs to score")
+    if model_wise:
+        output_path = output_path or output_dir
+        if output_path is None:
+            raise ValidationError("Model-wise analysis requires an output directory")
+    registry = Pipeline().registry
+    model_ids = tuple(dict.fromkeys(registry.resolve_id(model) for model in request.models))
+    reference_by_header = {
+        reference.id: replace(reference, id=f"reference_{number:06d}")
         for number, reference in enumerate(references, start=1)
     }
-    reference_by_header = {item.id: item.sequence for item in references}
-    rows = [
-        {
-            "noisy_file": str(item.path.relative_to(noisy_directory)),
-            "fasta_header": item.header,
-            "reference_length": len("".join(reference_by_header[item.header].split())),
-            "noisy_length": len("".join(item.sequence.split())),
-        }
-        for item in noisy_sequences
-    ]
-    base_rows = rows
-    pipeline = Pipeline()
-    # The deterministic adapter needs no torch installation.
-    if any(pipeline.registry.manifest(model).backend != "built_in"
-           for model in request.models):
-        try:
-            import torch
-        except ImportError:
-            pass  # The adapter provides the actionable dependency error.
-        else:
-            torch.set_num_threads(torch_threads)
-    workers = min(workers, len(rows))
-    LOGGER.info(
-        "Execution: %d scoring workers; embedding batch size=%d, token budget=%d, CPU threads=%d",
-        workers, batch_size, max_batch_tokens, torch_threads,
+    rows = (
+        [
+            pair_row(item, reference_by_header[item.header], noisy_directory)
+            for item in noisy_sequences
+        ]
+        if output_path is None
+        else None
     )
-    for number, model in enumerate(request.models, start=1):
-        if model_wise:
-            rows = [dict(row) for row in base_rows]
-        LOGGER.info("Model %d/%d: %s", number, len(request.models), model)
-        with model_cache(cache_dir, disposable=model_wise) as scratch:
-            cache_path = Path(scratch) / "embeddings.bin"
-            LOGGER.info("Temporary embedding cache: %s", cache_path)
-            # The general registry constructs fresh adapters on each lookup.
-            # Reuse this instance so batches do not reload the checkpoint.
-            adapter = pipeline.registry.adapter(model)
-            batch_registry = ModelRegistry()
-            batch_registry.register(adapter.manifest, lambda manifest: adapter)
-            batch_pipeline = Pipeline(batch_registry)
-            try:
-                model_id, index = cache_model_embeddings(
-                    batch_pipeline, replace(request, models=(model,)), cache_path,
-                    batch_size, max_batch_tokens,
-                )
-            finally:
-                adapter.unload()
-            tasks = (
-                (
-                    i, str(cache_path), model_id, index[reference_ids[item.header]],
-                    index[item.internal_id],
-                    (reference_by_header[item.header], item.sequence)
-                    if model_wise or number == 1 else None,
-                )
-                for i, item in enumerate(noisy_sequences)
-            )
-            LOGGER.info("%s: scoring %d pairs with %d workers", model_id, len(rows), workers)
-            score_tasks(tasks, rows, workers, model_id)
-            if model_wise:
-                write_csv(rows, Path(output_dir) / f"{quote(model_id, safe='')}.csv")
-        LOGGER.info("%s complete; temporary embedding cache removed", model_id)
-    return rows
+    torch_module = None
+    previous_threads = None
+    if any(registry.manifest(model).backend != "built_in" for model in model_ids):
+        try:
+            import torch as torch_module
+        except ImportError:
+            pass
+        else:
+            previous_threads = torch_module.get_num_threads()
+            torch_module.set_num_threads(torch_threads)
+    workers = min(workers, len(noisy_sequences))
+    LOGGER.info(
+        "Execution: %d pair worker threads; batch size=%d, token budget=%d, "
+        "torch threads=%d; embeddings stay in memory only",
+        workers,
+        batch_size,
+        max_batch_tokens,
+        torch_threads,
+    )
+    sink = None
+    try:
+        if output_path is not None:
+            sink = ScoreOutput(output_path, model_ids, model_wise)
+        for model_index, model_id in enumerate(model_ids):
+            with model_cache(cache_dir, disposable=model_wise):
+                adapter = registry.adapter(model_id)
+                worker_adapters = []
+                started = last_report = time.perf_counter()
+                completed = 0
+                try:
+                    adapter.validate_execution(request.execution)
+                    adapter.load(
+                        device=request.execution.device, precision=request.execution.precision
+                    )
+                    model_request = replace(request, models=(model_id,))
+                    if sink is not None:
+                        sink.start_model(model_id)
+
+                    score, worker_adapters = make_pair_worker(
+                        adapter,
+                        model_request,
+                        reference_by_header,
+                        noisy_directory,
+                        batch_size=batch_size,
+                        max_batch_tokens=max_batch_tokens,
+                        long_sequences=long_sequences,
+                    )
+
+                    with ThreadPoolExecutor(
+                        max_workers=workers, thread_name_prefix="noisy-pair"
+                    ) as pool:
+                        iterator = iter(enumerate(noisy_sequences))
+                        pending = {}
+                        exhausted = False
+                        try:
+                            while pending or not exhausted:
+                                while not exhausted and len(pending) < workers * 2:
+                                    try:
+                                        pair_index, item = next(iterator)
+                                    except StopIteration:
+                                        exhausted = True
+                                    else:
+                                        pending[pool.submit(score, item)] = pair_index
+                                if not pending:
+                                    break
+                                done, _ = wait(pending, timeout=10, return_when=FIRST_COMPLETED)
+                                for future in done:
+                                    pair_index = pending.pop(future)
+                                    scores = future.result()
+                                    if sink is not None:
+                                        sink.write(pair_index, model_index, scores)
+                                    else:
+                                        rows[pair_index].update(scores)
+                                    completed += 1
+                                now = time.perf_counter()
+                                if now - last_report >= 10 or completed == len(noisy_sequences):
+                                    elapsed = now - started
+                                    LOGGER.info(
+                                        "%s: %d/%d pairs scored and written, %.2f pairs/s",
+                                        model_id,
+                                        completed,
+                                        len(noisy_sequences),
+                                        completed / max(elapsed, 1e-9),
+                                    )
+                                    last_report = now
+                        finally:
+                            for future in pending:
+                                future.cancel()
+                            pending.clear()
+                    if sink is not None:
+                        sink.finish_model()
+                finally:
+                    for worker_adapter in worker_adapters:
+                        worker_adapter.unload()
+                    worker_adapters.clear()
+                    adapter.unload()
+                    gc.collect()
+                    if torch_module is not None and torch_module.cuda.is_available():
+                        torch_module.cuda.empty_cache()
+        if sink is not None:
+            sink.finalize()
+        return rows if rows is not None else len(noisy_sequences)
+    finally:
+        if sink is not None:
+            sink.close()
+        if previous_threads is not None:
+            torch_module.set_num_threads(previous_threads)
 
 
 @contextmanager
 def model_cache(cache_dir, *, disposable=False):
-    """Keep checkpoint downloads and embeddings in a disposable cache per model.
+    """Keep checkpoint downloads in a disposable cache per model.
 
     Set download locations before the lazy backend imports. Each model reuses
     the same paths because Hugging Face reads these variables at import time.
     """
     if not disposable:
-        with tempfile.TemporaryDirectory(prefix="noisy-embeddings-", dir=cache_dir) as scratch:
+        with tempfile.TemporaryDirectory(prefix="noisy-model-", dir=cache_dir) as scratch:
             yield scratch
         return
     if cache_dir is None:
@@ -628,8 +824,14 @@ def model_cache(cache_dir, *, disposable=False):
 
 def validate_model_cache(cache_dir, reference_path, noisy_directory, output_dir):
     cache = cache_dir.resolve()
-    protected = [reference_path.resolve(), noisy_directory.resolve(), output_dir.resolve(),
-                 Path(__file__).resolve(), Path.cwd().resolve(), Path.home().resolve()]
+    protected = [
+        reference_path.resolve(),
+        noisy_directory.resolve(),
+        output_dir.resolve(),
+        Path(__file__).resolve(),
+        Path.cwd().resolve(),
+        Path.home().resolve(),
+    ]
     if any(path == cache or cache in path.parents for path in protected):
         raise ValidationError(
             "--cache-dir must be a dedicated disposable directory, separate from "
@@ -678,12 +880,14 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         help="CSV path, or directory with --model_wise "
-             "(defaults: noisy_sequence_scores.csv / noisy_sequence_scores)",
+        "(defaults: noisy_sequence_scores.csv / noisy_sequence_scores)",
     )
     parser.add_argument(
-        "--model_wise", "--model-wise", action="store_true",
+        "--model_wise",
+        "--model-wise",
+        action="store_true",
         help="Score and save each model separately as <model-id>.csv in --output; "
-             "remove its temporary cache before starting the next model",
+        "remove its temporary cache before starting the next model",
     )
     parser.add_argument(
         "--models",
@@ -705,27 +909,41 @@ def parse_args() -> argparse.Namespace:
         help="Embedding precision (default: auto)",
     )
     parser.add_argument(
-        "--workers", type=positive_int,
+        "--workers",
+        type=positive_int,
         default=min(8, max(1, available_cpus() - 1)),
-        help="Scoring processes (default: available CPUs minus one, capped at 8; minimum 1)",
+        help="Complete pair worker threads (default: available CPUs minus one, capped at 8; minimum 1)",
     )
     parser.add_argument(
-        "--batch-size", type=positive_int, default=4,
+        "--batch-size",
+        type=positive_int,
+        default=4,
         help="Maximum sequences per embedding batch (default: 4)",
     )
     parser.add_argument(
-        "--max-batch-tokens", type=positive_int, default=2048,
+        "--max-batch-tokens",
+        type=positive_int,
+        default=2048,
         help="Padded token budget per batch (default: 2048); longer sequences run alone",
     )
     parser.add_argument(
-        "--torch-threads", type=positive_int, default=min(8, available_cpus()),
-        help="CPU threads during embedding (default: available CPUs capped at 8)",
+        "--torch-threads",
+        type=positive_int,
+        default=1,
+        help="PyTorch threads per operation; pair concurrency uses --workers (default: 1)",
     )
     parser.add_argument(
-        "--cache-dir", type=Path,
-        help="Parent for temporary embeddings; with --model_wise, a disposable directory "
-             "for checkpoints and embeddings whose entire contents are deleted after each model "
-             "(default: system temporary directory)",
+        "--cache-dir",
+        type=Path,
+        help="With --model_wise, a disposable directory for checkpoint downloads "
+        "whose entire contents are deleted after each model; no embeddings are saved "
+        "(default: system temporary directory)",
+    )
+    parser.add_argument(
+        "--long-sequences",
+        choices=("skip", "error"),
+        default="skip",
+        help="Record over-limit pairs and continue, or stop; never truncate (default: skip)",
     )
     parser.add_argument(
         "--log-level",
@@ -735,8 +953,9 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
     if args.output is None:
-        args.output = Path("noisy_sequence_scores" if args.model_wise
-                           else "noisy_sequence_scores.csv")
+        args.output = Path(
+            "noisy_sequence_scores" if args.model_wise else "noisy_sequence_scores.csv"
+        )
     return args
 
 
@@ -772,8 +991,8 @@ def main() -> int:
             len(noisy_sequences),
         )
         LOGGER.info(
-            "Starting embedding for %d total sequences using %s",
-            len(references) + len(noisy_sequences),
+            "Starting pair analysis for %d matched pairs using %s",
+            len(noisy_sequences),
             ", ".join(args.models),
         )
         request = build_embedding_request(
@@ -787,32 +1006,40 @@ def main() -> int:
             if args.model_wise:
                 args.cache_dir = args.cache_dir or Path(default_cache)
                 validate_model_cache(
-                    args.cache_dir, reference_path, noisy_directory, args.output,
+                    args.cache_dir,
+                    reference_path,
+                    noisy_directory,
+                    args.output,
                 )
                 if args.output.exists() and not args.output.is_dir():
                     raise ValidationError("--output must be a directory with --model_wise")
             if args.cache_dir is not None:
                 args.cache_dir.mkdir(parents=True, exist_ok=True)
-            rows = run_batched_analysis(
-                request, references, noisy_sequences, noisy_directory,
-                workers=args.workers, batch_size=args.batch_size,
-                max_batch_tokens=args.max_batch_tokens, torch_threads=args.torch_threads,
+            pair_count = run_batched_analysis(
+                request,
+                references,
+                noisy_sequences,
+                noisy_directory,
+                workers=args.workers,
+                batch_size=args.batch_size,
+                max_batch_tokens=args.max_batch_tokens,
+                torch_threads=args.torch_threads,
                 cache_dir=args.cache_dir,
-                model_wise=args.model_wise, output_dir=args.output if args.model_wise else None,
+                model_wise=args.model_wise,
+                output_path=args.output,
+                long_sequences=args.long_sequences,
             )
-        if not args.model_wise:
-            write_csv(rows, args.output)
     except FrameworkError as exc:
         LOGGER.error("Analysis stopped: %s", exc)
         print(json.dumps(exc.as_dict(), indent=2, sort_keys=True), file=sys.stderr)
         return 1
-    except (OSError, RuntimeError) as exc:
-        LOGGER.exception("Analysis failed: %s", exc)
+    except (OSError, RuntimeError):
+        LOGGER.exception("Analysis failed")
         return 1
 
     LOGGER.info(
         "Analysis complete: wrote %d comparison rows to %s in %.2f seconds",
-        len(rows) * (len(request.models) if args.model_wise else 1),
+        pair_count * (len(request.models) if args.model_wise else 1),
         args.output.resolve(),
         time.perf_counter() - started,
     )

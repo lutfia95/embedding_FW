@@ -1,4 +1,4 @@
-"""Checks for batching, process isolation, and numerical equivalence without PLM downloads."""
+"""Checks for batching, pair threads, streaming output, and numerical equivalence without PLM downloads."""
 
 import csv
 import os
@@ -15,15 +15,15 @@ from noisy_seq_analyser import (
     build_embedding_request,
     collect_rows,
     embedding_batches,
-    run_batched_analysis,
     model_cache,
+    run_batched_analysis,
     validate_model_cache,
 )
 from plms_framework import Pipeline
 from plms_framework.adapters.deterministic import DeterministicAdapter
+from plms_framework.errors import ValidationError
 from plms_framework.models import ProteinSequence
 from plms_framework.registry import ModelRegistry, default_registry
-from plms_framework.errors import ValidationError
 
 
 class ParallelScoringTests(unittest.TestCase):
@@ -49,13 +49,25 @@ class ParallelScoringTests(unittest.TestCase):
             for name in ("first", "second"):
                 registry.register(replace(manifest, id=name, aliases=()), factory)
             request = build_embedding_request(
-                references, noisy, models=("first", "second"), device="cpu", precision="auto",
+                references,
+                noisy,
+                models=("first", "second"),
+                device="cpu",
+                precision="auto",
             )
             with patch("plms_framework.pipeline.default_registry", registry):
                 run_batched_analysis(
-                    request, references, noisy, root, workers=1, batch_size=2,
-                    max_batch_tokens=20, torch_threads=1, cache_dir=cache,
-                    model_wise=True, output_dir=output,
+                    request,
+                    references,
+                    noisy,
+                    root,
+                    workers=1,
+                    batch_size=2,
+                    max_batch_tokens=20,
+                    torch_threads=1,
+                    cache_dir=cache,
+                    model_wise=True,
+                    output_dir=output,
                 )
             self.assertEqual(list(cache.iterdir()), [])
             self.assertEqual(sorted(p.name for p in output.iterdir()), ["first.csv", "second.csv"])
@@ -102,12 +114,27 @@ class ParallelScoringTests(unittest.TestCase):
             (noisy / "two.fa").write_text(">first\nMKTAA\n>second\nACDE\n")
             repository = Path(__file__).resolve().parents[1]
             result = subprocess.run(
-                [sys.executable, "-B", str(repository / "noisy_seq_analyser.py"),
-                 str(reference), str(noisy), "--output", str(root / "scores.csv"),
-                 "--models", "reference-deterministic-v1", "--workers", "2",
-                 "--batch-size", "1", "--cache-dir", str(root / "scratch")],
+                [
+                    sys.executable,
+                    "-B",
+                    str(repository / "noisy_seq_analyser.py"),
+                    str(reference),
+                    str(noisy),
+                    "--output",
+                    str(root / "scores.csv"),
+                    "--models",
+                    "reference-deterministic-v1",
+                    "--workers",
+                    "2",
+                    "--batch-size",
+                    "1",
+                    "--cache-dir",
+                    str(root / "scratch"),
+                ],
                 env={**os.environ, "PYTHONPATH": str(repository / "src")},
-                capture_output=True, text=True, timeout=60,
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             with (root / "scores.csv").open(newline="") as handle:
@@ -115,25 +142,28 @@ class ParallelScoringTests(unittest.TestCase):
             self.assertEqual(len(rows), 4)
             self.assertEqual(rows[0]["fasta_header"], "second")
             self.assertEqual(float(rows[0]["sequence.sequence_identity"]), 1.0)
-            self.assertIn("2 scoring workers", result.stderr)
+            self.assertIn("2 pair worker threads", result.stderr)
             self.assertEqual(list((root / "scratch").iterdir()), [])
             model_output = root / "model_scores"
             command = result.args.copy()
             command[command.index("--output") + 1] = str(model_output)
             command.append("--model_wise")
             result = subprocess.run(
-                command, env={**os.environ, "PYTHONPATH": str(repository / "src")},
-                capture_output=True, text=True, timeout=60,
+                command,
+                env={**os.environ, "PYTHONPATH": str(repository / "src")},
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             with (model_output / "reference-deterministic-v1.csv").open(newline="") as handle:
-                self.assertEqual(list(csv.DictReader(handle)), rows)
+                model_rows = list(csv.DictReader(handle))
+                self.assertEqual(sorted(model_rows, key=lambda row: int(row["pair_index"])), rows)
             self.assertEqual(list((root / "scratch").iterdir()), [])
 
     def test_batches_obey_size_and_padding_budget(self):
         sequences = tuple(
-            ProteinSequence(str(i), "A" * length)
-            for i, length in enumerate((19, 2, 3, 4, 1))
+            ProteinSequence(str(i), "A" * length) for i, length in enumerate((19, 2, 3, 4, 1))
         )
         batches = list(embedding_batches(sequences, 3, 12))
         self.assertEqual(sum(map(len, batches)), len(sequences))
@@ -143,7 +173,7 @@ class ParallelScoringTests(unittest.TestCase):
             if len(batch) > 1:
                 self.assertLessEqual(len(batch) * max(len(s.sequence) + 2 for s in batch), 12)
 
-    def test_cached_serial_and_spawn_workers_match_original_scores(self):
+    def test_in_memory_serial_and_thread_workers_match_original_scores(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             references = (
@@ -156,8 +186,11 @@ class ParallelScoringTests(unittest.TestCase):
                 NoisySequence(root / "b.fa", "noisy_3", "long reference", "MKTAYIAQ"),
             ]
             request = build_embedding_request(
-                references, noisy, models=("reference-deterministic-v1",),
-                device="cpu", precision="auto",
+                references,
+                noisy,
+                models=("reference-deterministic-v1",),
+                device="cpu",
+                precision="auto",
             )
             expected = collect_rows(references, noisy, Pipeline().embed(request), root)
             original_embed = DeterministicAdapter.embed
@@ -171,8 +204,14 @@ class ParallelScoringTests(unittest.TestCase):
 
                     with patch.object(DeterministicAdapter, "embed", record_embed):
                         actual = run_batched_analysis(
-                            request, references, noisy, root, workers=workers,
-                            batch_size=1, max_batch_tokens=12, torch_threads=1,
+                            request,
+                            references,
+                            noisy,
+                            root,
+                            workers=workers,
+                            batch_size=1,
+                            max_batch_tokens=12,
+                            torch_threads=1,
                             cache_dir=root,
                         )
                     self.assertEqual(len(instances), 5)
