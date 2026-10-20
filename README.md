@@ -6,6 +6,9 @@ registry and adapter interface provide a consistent workflow across differences
 in architecture, tokenization, sequence length, representation dimension,
 licensing, and hardware requirements.
 
+For threaded reference-to-noisy FASTA scoring with immediate CSV output and no
+embedding files, see [the analyser instructions](doc/NOISY_SEQUENCE_ANALYSER.md).
+
 ## Why this framework exists
 
 PLMs commonly expose contextual vectors for every amino acid. Turning those
