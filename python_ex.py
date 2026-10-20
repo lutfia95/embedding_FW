@@ -39,7 +39,7 @@ from plms_framework.transformations import transform_embeddings
 from plms_framework.visualization import render_requested
 
 
-MODEL_IDS = ("esm2-8m", "esmc-300m")
+MODEL_IDS = ("esm2-8m", "esmc-300m", "progen2-small")
 JOB_ID = "esm2-esmc-complete-example"
 
 # S1 and S2 are exact duplicates. S3 has three substitutions relative to S1.
@@ -47,7 +47,7 @@ JOB_ID = "esm2-esmc-complete-example"
 SEQUENCES = (
     {
         "id": "reference",
-        "sequence": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANN",
+        "sequence": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANNMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANNMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANN",
         "metadata": {"role": "reference", "expected_group": "reference_like"},
         "regions": [
             {"name": "n_terminal", "start": 1, "end": 12},
@@ -57,7 +57,7 @@ SEQUENCES = (
     },
     {
         "id": "exact_duplicate",
-        "sequence": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANN",
+        "sequence": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANNMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANNMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANN",
         "metadata": {"role": "exact duplicate", "expected_group": "reference_like"},
         "regions": [
             {"name": "n_terminal", "start": 1, "end": 12},
@@ -67,7 +67,7 @@ SEQUENCES = (
     },
     {
         "id": "similar_variant",
-        "sequence": "MKTAYIAKQRQVSFVKSHFTRQLEERLGLVEVQANN",
+        "sequence": "MKTAYIAKQRQVSFVKSHFTRQLEERLGLVEVQANNMKTAYIAKQRQVSFVKSHFTRQLEERLGLVEVQANNMKTAYIAKQRQVSFVKSHFTRQLEERLGLVEVQANN",
         "metadata": {"role": "three substitutions", "expected_group": "reference_like"},
         "regions": [
             {"name": "n_terminal", "start": 1, "end": 12},
@@ -77,7 +77,7 @@ SEQUENCES = (
     },
     {
         "id": "different_control",
-        "sequence": "GPGSGPGSGPGSGPGSGPGSGPGSGPGSGPGSGPGS",
+        "sequence": "GPGSGPGSGPGSGPGSGMKTAYIAKQRQVSPGSGPGSGPGSGPGSGPGSTAYIAKQRQVSAAANMMM",
         "metadata": {"role": "unrelated control", "expected_group": "composition_control"},
         "regions": [
             {"name": "n_terminal", "start": 1, "end": 12},
