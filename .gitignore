@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+.plms_artifacts/
+python_ex_output/
+noisy_sequence_scores.csv
+noisy_sequence_scores.models/
+noisy_sequence_scores/
+model_scores/

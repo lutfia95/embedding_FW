@@ -6,8 +6,10 @@ registry and adapter interface provide a consistent workflow across differences
 in architecture, tokenization, sequence length, representation dimension,
 licensing, and hardware requirements.
 
-For threaded reference-to-noisy FASTA scoring with immediate CSV output and no
-embedding files, see [the analyser instructions](doc/NOISY_SEQUENCE_ANALYSER.md).
+For a quick two-protein comparison, see the
+[runnable example](examples/test_two_seqs.py). For reference-to-noisy FASTA
+scoring, see the [analyser guide](doc/NOISY_SEQUENCE_ANALYSER.md). The
+[workflow guide](doc/WORKFLOWS.md) connects each entry point to its flags.
 
 ## Why this framework exists
 
@@ -249,6 +251,56 @@ python -m pip install -e '.[all,dev]'
 Large checkpoints are never downloaded during normal unit tests. Download size,
 GPU memory, model license, and gated access should be reviewed before enabling a
 real model in production.
+
+## Workflows and flags
+
+Run these commands from the repository root after installing the package.
+The deterministic adapter is a software fixture and needs no checkpoint.
+
+| Goal | Command | Flags and details |
+|---|---|---|
+| Compare two raw sequences | `python examples/test_two_seqs.py` | [Pair example and flags](doc/WORKFLOWS.md#two-sequence-flags) |
+| Score reference/noisy FASTAs | `python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas --models reference-deterministic-v1` | [Analyser workflow and all flags](doc/NOISY_SEQUENCE_ANALYSER.md) |
+| Inspect models, estimate, embed, compare | `plms-framework models`, `estimate`, `embed`, `compare` | [CLI commands](doc/WORKFLOWS.md#run-workflows) and [request options](doc/PYTHON_USAGE.md#complete-request-option-reference) |
+| Use the library directly | `python python_ex.py` | [Python demonstration flags](doc/WORKFLOWS.md#python-demonstration-flags) and [Python guide](doc/PYTHON_USAGE.md) |
+| Run the API | `plms-framework serve` | [Server flags](doc/WORKFLOWS.md#server-flags) and [API endpoints](#api-endpoints) |
+| Check the project | `python -m pytest -q` | [Automated workflows](doc/WORKFLOWS.md#automated-checks) |
+
+The [two-sequence example](examples/test_two_seqs.py) accepts two raw protein
+sequences and calls `score_two_sequences()`. That scorer uses the same sequence,
+pooled-embedding, and residue metrics as `noisy_seq_analyser.py`:
+
+```bash
+python examples/test_two_seqs.py
+python examples/test_two_seqs.py MKTAYIAK MKTAYIAQ \
+  --models esm2-8m --device cpu --precision float32
+```
+
+The first command uses `reference-deterministic-v1` and prints a JSON dictionary
+with 19 scores: five sequence scores, ten pooled-vector scores, and four residue
+scores. Two fields from the bundled example are:
+
+| Score | Value |
+|---|---:|
+| `sequence.sequence_identity` | `0.875` |
+| `reference-deterministic-v1.mean.cosine_similarity` | about `0.8913` |
+
+The second command uses a real ESM-2 checkpoint; the first run may download its
+weights. The root-level `test_two_seqs.py` remains an entry point for the same
+example. The [`score_two_sequences.py`](score_two_sequences.py) CLI defaults to
+`esm2-8m`.
+
+For a FASTA directory, the included fixtures produce three matched pairs:
+
+```bash
+python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
+  --models reference-deterministic-v1 --output noisy_sequence_scores.csv
+```
+
+Use `--model-wise --output model_scores` for one CSV per model. The analyser's
+default model list includes large ESM checkpoints, so set `--models` explicitly
+for a first run. See the [flag table](doc/NOISY_SEQUENCE_ANALYSER.md#flags) for
+matching, workers, batching, cache, length limits, and logging.
 
 ## Dependency-free example
 
@@ -933,10 +985,12 @@ discovery remains cheap.
 
 ## Testing
 
-The core suite needs no external package or checkpoint:
+The test suite uses `pytest` and needs no model checkpoint. Install the
+development and API dependencies, then run:
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests -v
+python -m pip install -e '.[dev,api]'
+python -m pytest -q
 ```
 
 It currently tests sequence validation, FASTA, regions, pooling, normalization,
@@ -944,8 +998,11 @@ cosine geometry, BLOSUM62, residue alignment, Sinkhorn OT, matrix agreement,
 partial failures, exact limits, atomic artifacts, checksums, path traversal, and
 SVG escaping.
 
-Real-model conformance tests must be separately marked because they can download
-large files and require specific devices.
+The [CI workflow](.github/workflows/ci.yml) runs these tests and smoke checks
+the CLI, two-sequence example, and noisy FASTA analyser on Python 3.11 and 3.12.
+The [manual model workflow](.github/workflows/model-check.yml) downloads the
+ESM-2 8M checkpoint and runs its conformance test. Other real-model tests remain
+opt-in because they can download large files and require specific devices.
 
 Run the pinned ESM-2 8M conformance test explicitly:
 

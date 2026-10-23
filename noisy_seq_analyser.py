@@ -21,8 +21,9 @@ model, plus sequence metrics. The entire supplied cache directory is emptied
 after every model (including on failure), so use a dedicated disposable folder.
 Checkpoint downloads are directed there; existing global caches are unchanged.
 
-The default model and metric choices mirror the pairwise scores demonstrated by
-``python_ex.py``.  The first run may download the ESM-2 and ESM-C checkpoints.
+The default model list includes ESM-1, ESM-2, and ESM-C checkpoints, including
+very large ones. Select models explicitly for a manageable first run. The
+sequence, pooled-vector, and residue metrics match ``score_two_sequences.py``.
 """
 
 from __future__ import annotations

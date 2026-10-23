@@ -1,0 +1,27 @@
+name: ESM-2 8M check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  esm2-8m:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install ESM-2 dependencies
+        run: python -m pip install -e '.[dev,hf]'
+      - name: Run checkpoint conformance test
+        env:
+          HF_HOME: ${{ runner.temp }}/hf-cache
+          PLMS_RUN_MODEL_TESTS: '1'
+        run: python -m unittest tests.test_real_models.RealModelTests -v
+      - name: Run two-sequence example
+        env:
+          HF_HOME: ${{ runner.temp }}/hf-cache
+        run: |
+          python examples/test_two_seqs.py MKTAYIAK MKTAYIAQ \
+            --models esm2-8m --device cpu --precision float32 \
+            > "$RUNNER_TEMP/two_seqs_esm2.json"

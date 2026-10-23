@@ -4,6 +4,11 @@ PLMs Framework can be used as a normal Python library. You do not need to run
 the FastAPI server when the embedding and comparison are part of a notebook,
 analysis script, training pipeline, or another Python application.
 
+For a small runnable comparison of two raw sequences, start with
+[`examples/test_two_seqs.py`](../examples/test_two_seqs.py). It uses the same
+metrics as the [noisy FASTA analyser](NOISY_SEQUENCE_ANALYSER.md). The
+[workflow guide](WORKFLOWS.md) lists script flags and CLI commands.
+
 This guide documents the currently implemented Python interface, every request
 option accepted by the core pipeline, the result structure, and direct Python
 access to diagnostics, transformations, annotation analysis, imported
