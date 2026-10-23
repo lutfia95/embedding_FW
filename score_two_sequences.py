@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Score two protein sequence strings using the noisy analyser's metrics.
 
 Example function call (the first run may download model checkpoints)::

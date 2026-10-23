@@ -21,8 +21,9 @@ model, plus sequence metrics. The entire supplied cache directory is emptied
 after every model (including on failure), so use a dedicated disposable folder.
 Checkpoint downloads are directed there; existing global caches are unchanged.
 
-The default model and metric choices mirror the pairwise scores demonstrated by
-``python_ex.py``.  The first run may download the ESM-2 and ESM-C checkpoints.
+The default model list includes ESM-1, ESM-2, and ESM-C checkpoints, including
+very large ones. Select models explicitly for a manageable first run. The
+sequence, pooled-vector, and residue metrics match ``score_two_sequences.py``.
 """
 
 from __future__ import annotations
@@ -62,7 +63,6 @@ from plms_framework.models import ProteinSequence
 from plms_framework.registry import ModelRegistry
 from plms_framework.sequences import parse_fasta
 from plms_framework.serialization import request_from_dict
-
 
 DEFAULT_MODELS = ("esm2-8m", "esm2-35m", "esm2-150m", "esm2-650m", "esm2-3b", "esm2-15b", "esm1b-650m", "esm1v-650m-1", "esm1v-650m-2", "esm1v-650m-3", "esm1v-650m-4", "esm1v-650m-5", "esmc-300m", "esmc-600m", "esmc-6b")
 LOGGER = logging.getLogger("noisy_seq_analyser")

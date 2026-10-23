@@ -222,8 +222,7 @@ def build_default_registry() -> ModelRegistry:
                 revision=revision,
                 limitations=(
                     "Large checkpoint download and substantial accelerator memory may be required",
-                    "Checkpoint-specific numerical conformance has not yet been run in this "
-                    "repository",
+                    "Checkpoint-specific numerical conformance has not yet been run in this repository",
                 ),
             ),
             HuggingFaceAdapter,

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-and-examples:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test and API dependencies
+        run: python -m pip install -e '.[dev,api]'
+      - name: Lint Python code
+        run: python -m ruff check .
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Check CLI requests
+        run: |
+          plms-framework models > "$RUNNER_TEMP/models.json"
+          plms-framework estimate examples/embed.json > "$RUNNER_TEMP/estimate.json"
+          plms-framework embed examples/embed.json > "$RUNNER_TEMP/embed.json"
+          plms-framework compare examples/compare.json > "$RUNNER_TEMP/compare.json"
+      - name: Check script interfaces
+        run: |
+          python score_two_sequences.py --help > "$RUNNER_TEMP/pair_help.txt"
+          python noisy_seq_analyser.py --help > "$RUNNER_TEMP/noisy_help.txt"
+          python python_ex.py --help > "$RUNNER_TEMP/demo_help.txt"
+      - name: Check two-sequence example
+        run: |
+          python examples/test_two_seqs.py > "$RUNNER_TEMP/two_seqs.json"
+          python - "$RUNNER_TEMP/two_seqs.json" <<'PY'
+          import json
+          import sys
+
+          scores = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert len(scores) == 19
+          assert scores["sequence.sequence_identity"] < 1
+          assert "reference-deterministic-v1.mean.cosine_similarity" in scores
+          PY
+      - name: Check noisy FASTA workflows
+        run: |
+          python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
+            --models reference-deterministic-v1 --workers 2 \
+            --output "$RUNNER_TEMP/noisy_scores.csv"
+          python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
+            --models reference-deterministic-v1 --workers 2 --model-wise \
+            --output "$RUNNER_TEMP/noisy_models" \
+            --cache-dir "$RUNNER_TEMP/noisy_cache"
+          python - "$RUNNER_TEMP/noisy_scores.csv" "$RUNNER_TEMP/noisy_models/reference-deterministic-v1.csv" <<'PY'
+          import csv
+          import sys
+
+          for path in sys.argv[1:]:
+              with open(path, newline="", encoding="utf-8") as handle:
+                  rows = list(csv.DictReader(handle))
+              assert len(rows) == 3, path
+              assert {row["fasta_header"] for row in rows} == {"protein_alpha", "protein_beta"}
+          PY

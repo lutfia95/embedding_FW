@@ -9,7 +9,6 @@ from ..errors import DependencyUnavailableError, ModelUnavailableError, Validati
 from ..models import Availability, ProteinSequence, RawEmbedding
 from .base import ModelAdapter
 
-
 _MINIMUM_ESM_VERSION = (3, 4, 1, 1)
 
 

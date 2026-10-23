@@ -1,0 +1,102 @@
+# Run workflows
+
+Run commands from the repository root. Install the core package with
+`python -m pip install -e .`; add extras as needed in the
+[installation guide](../README.md#installation). Python 3.11 or newer is
+required. The deterministic model shown below exercises the software without
+downloading a checkpoint.
+
+| Task | Entry point | Options and details |
+|---|---|---|
+| Inspect models | `plms-framework models` | Prints registered IDs and local availability. |
+| Estimate resources | `plms-framework estimate examples/embed.json` | Pass a request JSON path or `-` for standard input. |
+| Generate embeddings | `plms-framework embed examples/embed.json` | Pass a request JSON path or `-`. |
+| Compare proteins | `plms-framework compare examples/compare.json` | Pass a request JSON path or `-`. |
+| Compare two raw sequences | `python examples/test_two_seqs.py` | See [pair flags](#two-sequence-flags). |
+| Score two sequences directly | `python score_two_sequences.py MKTAYIAK MKTAYIAQ --models esm2-8m` | Same `--models`, `--device`, and `--precision` flags as the example; defaults to `esm2-8m`. |
+| Analyse noisy FASTA files | `python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas --models reference-deterministic-v1` | See [analyser flags](NOISY_SEQUENCE_ANALYSER.md#flags). |
+| Run the full Python demonstration | `python python_ex.py` | See [demonstration flags](#python-demonstration-flags); requires the `all` runtime profile and checkpoints. |
+| Start the API | `plms-framework serve` | See [server flags](#server-flags) and [API endpoints](../README.md#api-endpoints). |
+
+The CLI request JSON files in [`examples/`](../examples) cover embedding,
+comparison, cross-model analysis, imported spaces, diagnostics, and
+mean-centering. For every JSON request field and the Python equivalents, use
+the [Python usage guide](PYTHON_USAGE.md#complete-request-option-reference).
+The latter operations require a prior job or imported embedding space, so their
+placeholder job IDs must be replaced before running them through the API.
+
+## Two-sequence flags
+
+[`examples/test_two_seqs.py`](../examples/test_two_seqs.py) prints five sequence
+scores and, for each model, ten pooled-vector and four residue scores as JSON.
+It calls [`score_two_sequences.py`](../score_two_sequences.py), which shares the
+scoring functions in [`noisy_seq_analyser.py`](../noisy_seq_analyser.py).
+
+```bash
+python examples/test_two_seqs.py
+python examples/test_two_seqs.py MKTAYIAK MKTAYIAQ \
+  --models esm2-8m --device cpu --precision float32
+```
+
+| Argument | Meaning | Default |
+|---|---|---|
+| `sequence_a`, `sequence_b` | Raw protein sequences | `MKTAYIAK`, `MKTAYIAQ` |
+| `--models MODEL [MODEL ...]` | Model IDs | `reference-deterministic-v1` |
+| `--device {auto,cpu,cuda}` | Inference device | `auto` |
+| `--precision {auto,float32,bfloat16,bf16}` | Inference precision | `auto` |
+
+For a direct Python call, use `score_two_sequences(a, b, models=("esm2-8m",),
+device="cpu")`. Its default model is `esm2-8m`; the runnable example selects
+the deterministic fixture by default so it works without model downloads.
+The root-level `test_two_seqs.py` remains a compatibility entry point for the
+same example.
+
+## Python demonstration flags
+
+`python_ex.py` uses ESM-2 8M, ESM-C 300M, and ProGen2 small and writes results
+to `python_ex_output/` by default. It covers representations, comparison,
+cross-model methods, diagnostics, transformations, annotation analysis, and
+visualizations. It requires installed model backends and checkpoint access.
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--device {auto,cpu,cuda}` | Common device | `auto` |
+| `--precision {auto,float32,bfloat16,bf16}` | Common precision | `auto` |
+| `--output-dir PATH` | Artifact directory | `python_ex_output` |
+
+```bash
+python python_ex.py --device cpu --precision float32 --output-dir run_output
+```
+
+## Server flags
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--host HOST` | Bind address | `127.0.0.1` |
+| `--port PORT` | Bind port | `8000` |
+
+```bash
+plms-framework serve --host 127.0.0.1 --port 8000
+```
+
+The server needs the `api` extra. Its endpoints and request bodies are covered
+in the [README](../README.md#api-endpoints).
+
+## Automated checks
+
+The [CI workflow](../.github/workflows/ci.yml) runs Ruff, the Python test suite, and
+smoke checks for the CLI, pair example, and both noisy analyser output modes on
+Python 3.11 and 3.12. It uses the deterministic adapter and downloads no model
+checkpoints. The [Docs workflow](../.github/workflows/docs.yml) checks local
+Markdown links, section anchors, and JSON examples. The
+[model check workflow](../.github/workflows/model-check.yml) is manual because it
+downloads the ESM-2 8M checkpoint; it runs the conformance test and pair example.
+
+Run the same core tests locally with:
+
+```bash
+python -m pip install -e '.[dev,api]'
+python -m ruff check .
+python -m pytest -q
+python scripts/check_docs.py
+```

@@ -1,15 +1,14 @@
-#!/usr/bin/env python3
-"""Complete ESM-2/ESM-C comparison example with explained output.
+"""Complete ESM-2, ESM-C, and ProGen2 comparison example with explained output.
 
 Run this example from the repository root after the complete installation:
 
     python3.12 -m pip install -r requirements.txt
     python3.12 python_ex.py
 
-The first run downloads both ``facebook/esm2_t6_8M_UR50D`` and
-``biohub/ESMC-300M``. ESM-C is much larger and currently requires Python 3.12+.
-The example intentionally uses strict failure handling: both models must finish
-before cross-model results are reported.
+The first run downloads ``facebook/esm2_t6_8M_UR50D``, ``biohub/ESMC-300M``,
+and ``hugohrban/progen2-small``. ESM-C currently requires Python 3.12+.
+The example uses strict failure handling: all three models must finish before
+cross-model results are reported.
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ from plms_framework.models import (
 from plms_framework.serialization import request_from_dict
 from plms_framework.transformations import transform_embeddings
 from plms_framework.visualization import render_requested
-
 
 MODEL_IDS = ("esm2-8m", "esmc-300m", "progen2-small")
 JOB_ID = "esm2-esmc-complete-example"
@@ -161,7 +159,7 @@ METRIC_EXPLANATIONS = {
 
 
 def build_request(*, device: str = "auto", precision: str = "auto"):
-    """Build the complete two-model comparison request used by this example."""
+    """Build the complete three-model comparison request used by this example."""
     return request_from_dict(
         {
             "models": list(MODEL_IDS),
@@ -201,7 +199,7 @@ def number(value: Any) -> str:
     return str(value)
 
 
-def human_bytes(value: int | float | None) -> str:
+def human_bytes(value: float | None) -> str:
     if value is None:
         return "unknown"
     size = float(value)
@@ -288,7 +286,7 @@ def check_backends(pipeline: Pipeline) -> bool:
             print(f"    reason_code={availability.reason_code}")
             print(f"    detail={availability.detail}")
     if not ready:
-        print("\nThe complete showcase needs both models. Install with:")
+        print("\nThe complete example needs all three models. Install with:")
         print("  python3.12 -m pip install -r requirements.txt")
         print("Then rerun this file under Python 3.12+. No one-model fallback is used because")
         print("that would make the requested cross-model results unavailable.")
@@ -659,13 +657,13 @@ def parse_args() -> argparse.Namespace:
         "--device",
         choices=("auto", "cpu", "cuda"),
         default="auto",
-        help="Common device supported by both models (default: auto)",
+        help="Common device supported by all three models (default: auto)",
     )
     parser.add_argument(
         "--precision",
         choices=("auto", "float32", "bfloat16", "bf16"),
         default="auto",
-        help="Common precision supported by both models (default: auto)",
+        help="Common precision supported by all three models (default: auto)",
     )
     parser.add_argument(
         "--output-dir",
@@ -682,15 +680,15 @@ def main() -> int:
     pipeline = Pipeline()
     order = [item["id"] for item in SEQUENCES]
 
-    section("Complete PLMs Framework example: ESM-2 8M and ESM-C 300M")
+    section("Complete PLMs Framework example: ESM-2 8M, ESM-C 300M, and ProGen2 small")
     print(
         "This run exercises every implemented metric, all five representations supported by "
-        "both selected models, every cross-model method, diagnostics, mean-centering, "
+        "all three selected models, every cross-model method, diagnostics, mean-centering, "
         "categorical annotation analysis, and every visualization."
     )
     print(
         f"Requested execution: device={args.device}, precision={args.precision}, "
-        "strict two-model completion=True"
+        "strict three-model completion=True"
     )
     print_sequence_design(order)
     print_estimate(pipeline.estimate(request))
@@ -706,7 +704,7 @@ def main() -> int:
         print(json.dumps(exc.as_dict(), indent=2, sort_keys=True))
         print(
             "Resolve that model/dependency/device problem and rerun. Strict mode is intentional "
-            "so incomplete output is never presented as a two-model comparison."
+            "so incomplete output is never presented as a three-model comparison."
         )
         return 1
 
