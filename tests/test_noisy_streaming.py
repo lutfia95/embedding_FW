@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from noisy_seq_analyser import (
+from examples.noisy_seq_analyser import (
     NoisySequence,
     ScoreOutput,
     build_embedding_request,

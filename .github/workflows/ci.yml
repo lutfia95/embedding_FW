@@ -30,9 +30,9 @@ jobs:
           plms-framework compare examples/compare.json > "$RUNNER_TEMP/compare.json"
       - name: Check script interfaces
         run: |
-          python score_two_sequences.py --help > "$RUNNER_TEMP/pair_help.txt"
-          python noisy_seq_analyser.py --help > "$RUNNER_TEMP/noisy_help.txt"
-          python python_ex.py --help > "$RUNNER_TEMP/demo_help.txt"
+          python examples/score_two_sequences.py --help > "$RUNNER_TEMP/pair_help.txt"
+          python examples/noisy_seq_analyser.py --help > "$RUNNER_TEMP/noisy_help.txt"
+          python examples/python_ex.py --help > "$RUNNER_TEMP/demo_help.txt"
       - name: Check two-sequence example
         run: |
           python examples/test_two_seqs.py > "$RUNNER_TEMP/two_seqs.json"
@@ -47,10 +47,10 @@ jobs:
           PY
       - name: Check noisy FASTA workflows
         run: |
-          python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
+          python examples/noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
             --models reference-deterministic-v1 --workers 2 \
             --output "$RUNNER_TEMP/noisy_scores.csv"
-          python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
+          python examples/noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
             --models reference-deterministic-v1 --workers 2 --model-wise \
             --output "$RUNNER_TEMP/noisy_models" \
             --cache-dir "$RUNNER_TEMP/noisy_cache"

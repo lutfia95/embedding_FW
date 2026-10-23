@@ -16,11 +16,11 @@ import json
 import sys
 from pathlib import Path
 
-# The scorer and noisy analyser are repository-level scripts, outside the package.
+# Direct script execution adds the repository root for examples.* imports.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from examples.score_two_sequences import score_two_sequences
 from plms_framework.errors import FrameworkError
-from score_two_sequences import score_two_sequences
 
 
 def main(argv: list[str] | None = None) -> int:

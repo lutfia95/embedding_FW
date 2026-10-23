@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from noisy_seq_analyser import NoisySequence, build_embedding_request, collect_rows
+from examples.noisy_seq_analyser import NoisySequence, build_embedding_request, collect_rows
+from examples.score_two_sequences import score_two_sequences
 from plms_framework import Pipeline
 from plms_framework.errors import ValidationError
 from plms_framework.models import ProteinSequence
-from score_two_sequences import score_two_sequences
 
 
 @pytest.mark.parametrize("target", ["MKTAYIAK", "MKTAYIAQ", "MKTAY"])

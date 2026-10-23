@@ -265,15 +265,15 @@ The deterministic adapter is a software fixture and needs no checkpoint.
 | Goal | Command | Flags and details |
 |---|---|---|
 | Compare two raw sequences | `python examples/test_two_seqs.py` | [Pair example and flags](doc/WORKFLOWS.md#two-sequence-flags) |
-| Score reference/noisy FASTAs | `python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas --models reference-deterministic-v1` | [Analyser workflow and all flags](doc/NOISY_SEQUENCE_ANALYSER.md) |
+| Score reference/noisy FASTAs | `python examples/noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas --models reference-deterministic-v1` | [Analyser workflow and all flags](doc/NOISY_SEQUENCE_ANALYSER.md) |
 | Inspect models, estimate, embed, compare | `plms-framework models`, `estimate`, `embed`, `compare` | [CLI commands](doc/WORKFLOWS.md#run-workflows) and [request options](doc/PYTHON_USAGE.md#complete-request-option-reference) |
-| Use the library directly | `python python_ex.py` | [Python demonstration flags](doc/WORKFLOWS.md#python-demonstration-flags) and [Python guide](doc/PYTHON_USAGE.md) |
+| Use the library directly | `python examples/python_ex.py` | [Python demonstration flags](doc/WORKFLOWS.md#python-demonstration-flags) and [Python guide](doc/PYTHON_USAGE.md) |
 | Run the API | `plms-framework serve` | [Server flags](doc/WORKFLOWS.md#server-flags) and [API endpoints](#api-endpoints) |
 | Check the project | `python -m pytest -q` | [Automated workflows](doc/WORKFLOWS.md#automated-checks) |
 
 The [two-sequence example](examples/test_two_seqs.py) accepts two raw protein
 sequences and calls `score_two_sequences()`. That scorer uses the same sequence,
-pooled-embedding, and residue metrics as `noisy_seq_analyser.py`:
+pooled-embedding, and residue metrics as `examples/noisy_seq_analyser.py`:
 
 ```bash
 python examples/test_two_seqs.py
@@ -291,14 +291,13 @@ scores. Two fields from the bundled example are:
 | `reference-deterministic-v1.mean.cosine_similarity` | about `0.8913` |
 
 The second command uses a real ESM-2 checkpoint; the first run may download its
-weights. The root-level `test_two_seqs.py` remains an entry point for the same
-example. The [`score_two_sequences.py`](score_two_sequences.py) CLI defaults to
+weights. The [`score_two_sequences.py`](examples/score_two_sequences.py) CLI defaults to
 `esm2-8m`.
 
 For a FASTA directory, the included fixtures produce three matched pairs:
 
 ```bash
-python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
+python examples/noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
   --models reference-deterministic-v1 --output noisy_sequence_scores.csv
 ```
 

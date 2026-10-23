@@ -13,9 +13,9 @@ downloading a checkpoint.
 | Generate embeddings | `plms-framework embed examples/embed.json` | Pass a request JSON path or `-`. |
 | Compare proteins | `plms-framework compare examples/compare.json` | Pass a request JSON path or `-`. |
 | Compare two raw sequences | `python examples/test_two_seqs.py` | See [pair flags](#two-sequence-flags). |
-| Score two sequences directly | `python score_two_sequences.py MKTAYIAK MKTAYIAQ --models esm2-8m` | Same `--models`, `--device`, and `--precision` flags as the example; defaults to `esm2-8m`. |
-| Analyse noisy FASTA files | `python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas --models reference-deterministic-v1` | See [analyser flags](NOISY_SEQUENCE_ANALYSER.md#flags). |
-| Run the full Python demonstration | `python python_ex.py` | See [demonstration flags](#python-demonstration-flags); requires the `all` runtime profile and checkpoints. |
+| Score two sequences directly | `python examples/score_two_sequences.py MKTAYIAK MKTAYIAQ --models esm2-8m` | Same `--models`, `--device`, and `--precision` flags as the example; defaults to `esm2-8m`. |
+| Analyse noisy FASTA files | `python examples/noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas --models reference-deterministic-v1` | See [analyser flags](NOISY_SEQUENCE_ANALYSER.md#flags). |
+| Run the full Python demonstration | `python examples/python_ex.py` | See [demonstration flags](#python-demonstration-flags); requires the `all` runtime profile and checkpoints. |
 | Start the API | `plms-framework serve` | See [server flags](#server-flags) and [API endpoints](../README.md#api-endpoints). |
 
 The CLI request JSON files in [`examples/`](../examples) cover embedding,
@@ -29,8 +29,8 @@ placeholder job IDs must be replaced before running them through the API.
 
 [`examples/test_two_seqs.py`](../examples/test_two_seqs.py) prints five sequence
 scores and, for each model, ten pooled-vector and four residue scores as JSON.
-It calls [`score_two_sequences.py`](../score_two_sequences.py), which shares the
-scoring functions in [`noisy_seq_analyser.py`](../noisy_seq_analyser.py).
+It calls [`score_two_sequences.py`](../examples/score_two_sequences.py), which shares the
+scoring functions in [`noisy_seq_analyser.py`](../examples/noisy_seq_analyser.py).
 
 ```bash
 python examples/test_two_seqs.py
@@ -45,15 +45,15 @@ python examples/test_two_seqs.py MKTAYIAK MKTAYIAQ \
 | `--device {auto,cpu,cuda}` | Inference device | `auto` |
 | `--precision {auto,float32,bfloat16,bf16}` | Inference precision | `auto` |
 
-For a direct Python call, use `score_two_sequences(a, b, models=("esm2-8m",),
-device="cpu")`. Its default model is `esm2-8m`; the runnable example selects
-the deterministic fixture by default so it works without model downloads.
-The root-level `test_two_seqs.py` remains a compatibility entry point for the
-same example.
+For a direct Python call, import `score_two_sequences` from
+`examples.score_two_sequences`, then call it with
+`score_two_sequences(a, b, models=("esm2-8m",), device="cpu")`. Its default
+model is `esm2-8m`; the runnable example selects the deterministic fixture by
+default so it works without model downloads.
 
 ## Python demonstration flags
 
-`python_ex.py` uses ESM-2 8M, ESM-C 300M, and ProGen2 small and writes results
+`examples/python_ex.py` uses ESM-2 8M, ESM-C 300M, and ProGen2 small and writes results
 to `python_ex_output/` by default. It covers representations, comparison,
 cross-model methods, diagnostics, transformations, annotation analysis, and
 visualizations. It requires installed model backends and checkpoint access.
@@ -65,7 +65,7 @@ visualizations. It requires installed model backends and checkpoint access.
 | `--output-dir PATH` | Artifact directory | `python_ex_output` |
 
 ```bash
-python python_ex.py --device cpu --precision float32 --output-dir run_output
+python examples/python_ex.py --device cpu --precision float32 --output-dir run_output
 ```
 
 ## Server flags

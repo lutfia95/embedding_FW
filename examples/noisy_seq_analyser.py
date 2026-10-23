@@ -10,10 +10,10 @@ With --model_wise, --output is a directory containing one CSV per model.
 
 Example:
 
-    python3.12 noisy_seq_analyser.py reference.fasta noisy_fastas \
+    python3.12 examples/noisy_seq_analyser.py reference.fasta noisy_fastas \
         --output noisy_sequence_scores.csv
 
-    python3.12 noisy_seq_analyser.py reference.fasta noisy_fastas \
+    python3.12 examples/noisy_seq_analyser.py reference.fasta noisy_fastas \
         --model_wise --output model_scores --cache-dir model_cache
 
 In model-wise mode, each CSV contains reference-to-noisy scores from just one
