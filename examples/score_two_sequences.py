@@ -2,7 +2,7 @@
 
 Example function call (the first run may download model checkpoints)::
 
-    from score_two_sequences import score_two_sequences
+    from examples.score_two_sequences import score_two_sequences
 
     scores = score_two_sequences(
         "MKTAYIAK", "MKTAYIAQ",
@@ -14,7 +14,7 @@ Example function call (the first run may download model checkpoints)::
 
 Command line::
 
-    python score_two_sequences.py MKTAYIAK MKTAYIAQ --models esm2-8m
+    python examples/score_two_sequences.py MKTAYIAK MKTAYIAQ --models esm2-8m
 
 For a quick check without downloading a model, select reference-deterministic-v1.
 """
@@ -23,12 +23,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
+from pathlib import Path
 
-from noisy_seq_analyser import add_model_scores, index_representations, sequence_scores
 from plms_framework import Pipeline
 from plms_framework.errors import FrameworkError, ValidationError
 from plms_framework.serialization import request_from_dict
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from examples.noisy_seq_analyser import add_model_scores, index_representations, sequence_scores
 
 
 def score_two_sequences(

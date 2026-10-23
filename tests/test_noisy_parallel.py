@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from noisy_seq_analyser import (
+from examples.noisy_seq_analyser import (
     NoisySequence,
     build_embedding_request,
     collect_rows,
@@ -118,7 +118,7 @@ class ParallelScoringTests(unittest.TestCase):
                 [
                     sys.executable,
                     "-B",
-                    str(repository / "noisy_seq_analyser.py"),
+                    str(repository / "examples" / "noisy_seq_analyser.py"),
                     str(reference),
                     str(noisy),
                     "--output",

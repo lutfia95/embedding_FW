@@ -3,7 +3,7 @@
 Run this example from the repository root after the complete installation:
 
     python3.12 -m pip install -r requirements.txt
-    python3.12 python_ex.py
+    python3.12 examples/python_ex.py
 
 The first run downloads ``facebook/esm2_t6_8M_UR50D``, ``biohub/ESMC-300M``,
 and ``hugohrban/progen2-small``. ESM-C currently requires Python 3.12+.

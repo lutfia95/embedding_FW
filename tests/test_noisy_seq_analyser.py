@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from noisy_seq_analyser import (
+from examples.noisy_seq_analyser import (
     build_embedding_request,
     collect_rows,
     discover_noisy_fastas,

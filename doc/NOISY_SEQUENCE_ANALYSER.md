@@ -1,8 +1,8 @@
 # Noisy sequence analyser
 
-`noisy_seq_analyser.py` compares reference proteins with matching records in a
+`examples/noisy_seq_analyser.py` compares reference proteins with matching records in a
 directory of perturbed FASTA files. It uses the same sequence and embedding
-scores as [`score_two_sequences.py`](../score_two_sequences.py). The
+scores as [`score_two_sequences.py`](../examples/score_two_sequences.py). The
 [`two-sequence example`](../examples/test_two_seqs.py) calls that scorer without
 creating FASTA files.
 
@@ -17,7 +17,7 @@ records. The [noisy FASTA directory](../examples/noisy_fastas) has two files;
 three records match the reference headers.
 
 ```bash
-python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
+python examples/noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
   --models reference-deterministic-v1 --output noisy_sequence_scores.csv
 ```
 
@@ -28,7 +28,7 @@ While the command runs, per-model CSVs are available in
 For one CSV per model, with rows flushed as pairs finish:
 
 ```bash
-python noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
+python examples/noisy_seq_analyser.py examples/noisy_reference.fasta examples/noisy_fastas \
   --models reference-deterministic-v1 --model-wise \
   --output model_scores --workers 2 --batch-size 2
 ```
@@ -74,7 +74,7 @@ completion order; `pair_index` gives their zero-based input order.
 | `--long-sequences {skip,error}` | Record over-limit pairs or stop | `skip` |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | Log detail | `INFO` |
 
-Use `python noisy_seq_analyser.py --help` to inspect the installed script's
+Use `python examples/noisy_seq_analyser.py --help` to inspect the script's
 options. `--models` without a value is invalid. Select a small model explicitly
 for the first real-model run, for example `--models esm2-8m`. The default model
 list includes checkpoints too large for a typical laptop.
