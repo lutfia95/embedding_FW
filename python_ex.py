@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Complete ESM-2, ESM-C, and ProGen2 comparison example with explained output.
 
 Run this example from the repository root after the complete installation:
@@ -37,7 +36,6 @@ from plms_framework.models import (
 from plms_framework.serialization import request_from_dict
 from plms_framework.transformations import transform_embeddings
 from plms_framework.visualization import render_requested
-
 
 MODEL_IDS = ("esm2-8m", "esmc-300m", "progen2-small")
 JOB_ID = "esm2-esmc-complete-example"
@@ -201,7 +199,7 @@ def number(value: Any) -> str:
     return str(value)
 
 
-def human_bytes(value: int | float | None) -> str:
+def human_bytes(value: float | None) -> str:
     if value is None:
         return "unknown"
     size = float(value)

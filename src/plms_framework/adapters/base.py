@@ -13,7 +13,6 @@ from ..models import (
     RepresentationSpec,
 )
 
-
 _PRECISION_ALIASES = {
     "float16": "float16",
     "fp16": "float16",

@@ -86,12 +86,13 @@ class ParallelScoringTests(unittest.TestCase):
             target = root / "keep.txt"
             target.write_text("keep")
             before = os.environ.get("HF_HOME")
-            with self.assertRaisesRegex(RuntimeError, "failed"):
-                with model_cache(cache, disposable=True):
-                    (cache / "hub").mkdir()
-                    (cache / "hub" / "weights").write_text("checkpoint")
-                    (cache / "link").symlink_to(target)
-                    raise RuntimeError("failed")
+            with self.assertRaisesRegex(RuntimeError, "failed"), model_cache(
+                cache, disposable=True
+            ):
+                (cache / "hub").mkdir()
+                (cache / "hub" / "weights").write_text("checkpoint")
+                (cache / "link").symlink_to(target)
+                raise RuntimeError("failed")
             self.assertEqual(list(cache.iterdir()), [])
             self.assertEqual(target.read_text(), "keep")
             self.assertEqual(os.environ.get("HF_HOME"), before)
@@ -135,6 +136,7 @@ class ParallelScoringTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 timeout=60,
+                check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             with (root / "scores.csv").open(newline="") as handle:
@@ -154,6 +156,7 @@ class ParallelScoringTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 timeout=60,
+                check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             with (model_output / "reference-deterministic-v1.csv").open(newline="") as handle:
@@ -198,7 +201,7 @@ class ParallelScoringTests(unittest.TestCase):
                 with self.subTest(workers=workers):
                     instances = []
 
-                    def record_embed(adapter, *args, **kwargs):
+                    def record_embed(adapter, *args, instances=instances, **kwargs):
                         instances.append(adapter)
                         return original_embed(adapter, *args, **kwargs)
 

@@ -64,7 +64,6 @@ from plms_framework.registry import ModelRegistry
 from plms_framework.sequences import parse_fasta
 from plms_framework.serialization import request_from_dict
 
-
 DEFAULT_MODELS = ("esm2-8m", "esm2-35m", "esm2-150m", "esm2-650m", "esm2-3b", "esm2-15b", "esm1b-650m", "esm1v-650m-1", "esm1v-650m-2", "esm1v-650m-3", "esm1v-650m-4", "esm1v-650m-5", "esmc-300m", "esmc-600m", "esmc-6b")
 LOGGER = logging.getLogger("noisy_seq_analyser")
 FASTA_SUFFIXES = frozenset({".fa", ".faa", ".fas", ".fasta", ".fsa"})

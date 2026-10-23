@@ -1,5 +1,10 @@
 # PLMs Framework
 
+[![Tests](https://github.com/lutfia95/embedding_FW/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lutfia95/embedding_FW/actions/workflows/ci.yml)
+[![Docs](https://github.com/lutfia95/embedding_FW/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/lutfia95/embedding_FW/actions/workflows/docs.yml)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-D22128)](LICENSE)
+
 PLMs Framework is an API and Python library for generating, comparing,
 benchmarking, and visualizing protein language model representations. A model
 registry and adapter interface provide a consistent workflow across differences
@@ -990,7 +995,9 @@ development and API dependencies, then run:
 
 ```bash
 python -m pip install -e '.[dev,api]'
+python -m ruff check .
 python -m pytest -q
+python scripts/check_docs.py
 ```
 
 It currently tests sequence validation, FASTA, regions, pooling, normalization,
@@ -998,8 +1005,10 @@ cosine geometry, BLOSUM62, residue alignment, Sinkhorn OT, matrix agreement,
 partial failures, exact limits, atomic artifacts, checksums, path traversal, and
 SVG escaping.
 
-The [CI workflow](.github/workflows/ci.yml) runs these tests and smoke checks
+The [CI workflow](.github/workflows/ci.yml) runs lint, tests, and smoke checks
 the CLI, two-sequence example, and noisy FASTA analyser on Python 3.11 and 3.12.
+The [Docs workflow](.github/workflows/docs.yml) checks local links, headings,
+and example JSON files with [`scripts/check_docs.py`](scripts/check_docs.py).
 The [manual model workflow](.github/workflows/model-check.yml) downloads the
 ESM-2 8M checkpoint and runs its conformance test. Other real-model tests remain
 opt-in because they can download large files and require specific devices.

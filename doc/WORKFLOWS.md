@@ -84,16 +84,19 @@ in the [README](../README.md#api-endpoints).
 
 ## Automated checks
 
-The [CI workflow](../.github/workflows/ci.yml) runs the Python test suite and
+The [CI workflow](../.github/workflows/ci.yml) runs Ruff, the Python test suite, and
 smoke checks for the CLI, pair example, and both noisy analyser output modes on
 Python 3.11 and 3.12. It uses the deterministic adapter and downloads no model
-checkpoints. The [model check workflow](../.github/workflows/model-check.yml) is
-manual because it downloads the ESM-2 8M checkpoint; it runs the conformance
-test and the pair example with that model.
+checkpoints. The [Docs workflow](../.github/workflows/docs.yml) checks local
+Markdown links, section anchors, and JSON examples. The
+[model check workflow](../.github/workflows/model-check.yml) is manual because it
+downloads the ESM-2 8M checkpoint; it runs the conformance test and pair example.
 
 Run the same core tests locally with:
 
 ```bash
 python -m pip install -e '.[dev,api]'
+python -m ruff check .
 python -m pytest -q
+python scripts/check_docs.py
 ```

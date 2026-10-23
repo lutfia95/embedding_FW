@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from typing import ClassVar
 from unittest.mock import patch
 
 from plms_framework.models import Availability
@@ -30,7 +31,7 @@ class _FakeLoadedModel:
 
 
 class _Loader:
-    calls = []
+    calls: ClassVar[list] = []
 
     @classmethod
     def from_pretrained(cls, artifact, **kwargs):
@@ -39,15 +40,15 @@ class _Loader:
 
 
 class _AutoModel(_Loader):
-    calls = []
+    calls: ClassVar[list] = []
 
 
 class _AutoModelForSeq2SeqLM(_Loader):
-    calls = []
+    calls: ClassVar[list] = []
 
 
 class _AutoModelForCausalLM(_Loader):
-    calls = []
+    calls: ClassVar[list] = []
 
 
 class _FakeTokenizer:
@@ -58,7 +59,7 @@ class _FakeTokenizer:
 
 
 class _AutoTokenizer:
-    calls = []
+    calls: ClassVar[list] = []
 
     @classmethod
     def from_pretrained(cls, artifact, **kwargs):
