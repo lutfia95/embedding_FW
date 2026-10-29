@@ -116,7 +116,7 @@ differ:
 | Compare sequences and PLMs | `Pipeline.compare()` | `POST /v1/compare` |
 | Execution | Runs in the calling process | Comparison jobs run in a worker |
 | Result | Returned as a Python `dict` | Returned as JSON/job result |
-| Job persistence and polling | Not automatic | Built in |
+| Job tracking and polling | Caller-managed | In-memory job store; lost on restart |
 | Artifact rendering | Explicit function call | Automatic for comparison jobs |
 
 Use direct Python when the caller already owns the execution process and wants
@@ -306,8 +306,8 @@ Important interactions:
 - `models` selects adapters; aliases are resolved before execution and successful
   output keys always use canonical IDs.
 - A representation is computed for every sequence and every requested model.
-  Requesting two layers causes two forward passes per model in the current
-  implementation.
+  Each distinct requested layer causes a separate forward pass per model in the
+  current implementation; pooling methods at the same layer share that pass.
 - Each method/layer combination must be unique. Normalization is not part of
   result matrix keys, so request a method/layer only once.
 - Vector metrics require at least one of `mean`, `max`, or a supported `native`
@@ -398,16 +398,17 @@ Biohub ESM-C forms such as `esmc_300m` and `biohub/ESMC-300M`, ProtTrans
 underscore forms such as `prott5_xl_bfd`, and `progen2_small`/
 `progen2_medium`.
 
-`adapter.availability().available` currently means that the adapter's required
-Python packages are importable. It does not prove that a checkpoint is cached,
-downloadable, licensed for the intended use, compatible with the adapter, or
-small enough for the selected hardware. The manifest's `conformance` field and
-`limitations` list provide the stronger qualification.
+`adapter.availability().available` reports local dependency checks. The
+Hugging Face adapter checks whether its package modules can be found; the ESM-C
+adapter also checks the Python and `esm` distribution versions. These checks do
+not load the model or verify checkpoint access, compatibility, or memory
+requirements. Inspect the manifest's `conformance` and `limitations` fields
+before choosing a model.
 
 The ESM-C entries use their own Biohub adapter and never fall through to the
-generic Hugging Face loader. They have accurate layer/dimension metadata and a
-2,046-residue limit, but they have not yet passed the repository's real-model
-conformance suite. Treat the status literally.
+generic Hugging Face loader. Their manifests declare layer counts, embedding
+dimensions, and a 2,046-residue limit. Checkpoint conformance is still marked as unvalidated in
+the registry.
 
 ## Model and backend guide
 
@@ -435,7 +436,8 @@ ProGen2 is an explicit security exception. Its manifests set
 custom configuration and modeling code. Both revisions are immutable pins, but
 deployments should still review that code and upstream licensing before use.
 
-Run all newly registered checkpoints on a capable machine with:
+Run the extended checkpoint suite on a machine with sufficient storage and
+memory:
 
 ```bash
 HF_HOME=.model_cache PLMS_RUN_EXTENDED_MODEL_TESTS=1 \
@@ -482,7 +484,7 @@ Common ESM-C failures:
 | `model_unavailable` during download | No network/cache access, insufficient disk, or upstream Hub error | Check the nested message and pre-populate the cache if running offline |
 | CUDA requested but unavailable | CPU-only PyTorch or inaccessible GPU | Use `device="cpu"` or install a matching CUDA PyTorch build |
 | Out of memory | Checkpoint, activations, batch, or hidden-state request is too large | Start with `esmc-300m`, one short sequence, pooled output, and no intermediate layer |
-| MPS or float16 capability failure | ESM-C does not advertise that execution combination here | Use CPU/float32 or compatible CUDA/bfloat16 |
+| MPS or float16 capability failure | This ESM-C adapter supports CPU/CUDA and float32/bfloat16 | Use CPU/float32 or compatible CUDA/bfloat16 |
 | Length error above 2,046 residues | The 2,048-token context also contains `<cls>` and `<eos>` | Shorten upstream or choose another model; framework truncation/windowing is not implemented |
 
 The adapter uses `biohub/ESMC-*` weights through `EsmcForMaskedLM`, removes
@@ -537,7 +539,7 @@ request = request_from_dict(
 )
 ```
 
-Sequence handling rules:
+Sequence handling:
 
 - IDs are stripped and must be non-empty and unique after stripping.
 - Sequences are uppercased and all formatting whitespace is removed.
@@ -545,7 +547,9 @@ Sequence handling rules:
 - Regions use 1-based inclusive coordinates.
 - A region must satisfy `1 <= start <= end <= sequence length`.
 - The default alphabet is `ACDEFGHIKLMNPQRSTVWYBXZJUO`.
-- Unsupported characters are rejected rather than silently replaced.
+- Characters outside the declared alphabet are rejected. Characters within
+  that alphabet are passed to the tokenizer, which may encode an ambiguous
+  residue as an unknown token; row-count validation does not detect that case.
 - Long sequences are rejected if they exceed a model's declared native limit.
 - Silent truncation is never performed.
 
@@ -568,7 +572,7 @@ each protein.
 | `window_mean` | `W` positional vectors of shape `D` | Deterministic local windows |
 | `native` | Vector of shape `D` | Upstream-defined pooled output when an adapter explicitly supports it |
 
-All currently registered built-in and Hugging Face manifests advertise
+All current default registry manifests advertise
 `mean`, `max`, `residue`, `region_mean`, and `window_mean`. `native` exists in
 the data model and is accepted for imported spaces, but no current default
 registry manifest advertises it. Requesting `native` from those models produces
@@ -622,8 +626,10 @@ one region on every sequence being materialized.
 
 Use `"model_default"` unless the analysis specifically concerns intermediate
 layers. It selects the adapter's final representation without requesting the
-complete hidden-state stack. The only supported string is exactly
-`"model_default"`; names such as `"last"` are rejected.
+complete hidden-state stack for encoders. The ProGen2 adapter currently
+requests the full stack even with `"model_default"`. The only supported string
+is exactly `"model_default"`; names such as `"last"` are rejected. A manifest's descriptive
+`default_layer` value, such as `"final_hidden_state"`, is not a request value.
 
 For adapters with a known layer count `K`, integer layers range from `0` through
 `K`. Layer `0` is the input embedding state and layer `K` is the final
@@ -648,9 +654,8 @@ representation. The matrix key records both method and layer.
 | `max_exact_sequences` | Integer at least 2 | `2000` | Maximum sequence count accepted by `compare()`; does not limit `embed()` |
 
 The dataclass layer stores `device`, `precision`, `all_to_all`, and
-`on_long_sequence` as strings, but the pipeline validates the implemented
-values before inference. A misspelling or future value raises `ValidationError`;
-it never silently activates, disables, or substitutes an algorithm.
+`on_long_sequence` as strings. The pipeline checks these values before
+inference and raises `ValidationError` for unsupported values.
 
 Backend defaults and constraints:
 
@@ -737,8 +742,10 @@ mean_a = next(
 
 ## Within-model comparison
 
-Use `Pipeline.compare()` with at least two sequences. It embeds the sequences
-and computes all requested compatible metrics independently inside each model.
+Use `Pipeline.compare()` with at least two sequences for within-model
+comparison. It embeds the sequences and computes the requested compatible
+metrics independently inside each model. A single sequence is accepted when
+cross-model analysis is enabled, as shown below.
 
 ### Supported vector metrics
 
@@ -885,9 +892,10 @@ print(cross["scientific_guardrail"])
 print(cross["comparisons"]["matrix_spearman"])
 ```
 
-For a dependency-free demonstration, construct a registry with two reference
-adapters under different IDs, as shown later in
-[Custom registries](#custom-registries).
+For a dependency-free software check, use the two reference adapters in
+[Custom registries](#custom-registries). They produce identical embeddings, so
+their agreement illustrates the interface rather than a difference between
+models.
 
 Supported multi-sequence methods:
 
@@ -967,12 +975,13 @@ from pathlib import Path
 from plms_framework import EmbeddingRequest, Pipeline
 from plms_framework.sequences import parse_fasta
 
-sequences = parse_fasta(Path("examples/proteins.fasta").read_text())
+sequences = parse_fasta(Path("examples/proteins.fasta").read_text(encoding="utf-8"))
 request = EmbeddingRequest(models=("reference",), sequences=sequences)
 result = Pipeline().embed(request)
 ```
 
-The complete text after `>` becomes the sequence ID. Blank lines are ignored.
+The text after `>` becomes the sequence ID, with leading and trailing
+whitespace removed. Blank lines are ignored.
 A sequence before the first header, an empty header, or a FASTA file without
 records is rejected. Normal sequence canonicalization still occurs when the
 pipeline runs.
@@ -990,10 +999,11 @@ are:
 | `failures` | Structured per-model failures when partial execution is enabled |
 | `provenance` | Framework, platform, timing, execution, and sequence digests |
 | `sequence_baselines` | Sequence-only comparison matrices; compare results only |
-| `cross_model` | Cross-PLM results or `{"enabled": false}` |
+| `cross_model` | Cross-PLM results or `{"enabled": false}`; compare results only |
 | `requested_visualizations` | Rendering instructions retained by `compare()` |
 
-Each successful model contains:
+Each successful model contains the following fields. `matrices` and
+`residue_pairs` are added by `compare()` and are absent from `embed()` outputs:
 
 | Key | Meaning |
 |---|---|
@@ -1054,7 +1064,7 @@ Supported names and requirements:
 | `clustered_heatmap` | SVG | A pairwise matrix |
 | `distance_distribution` | SVG | A pairwise matrix |
 | `nearest_neighbor_graph` | SVG | A pairwise matrix; shows top three neighbors |
-| `residue_similarity_map` | SVG per pair | Residue representation and residue metric |
+| `residue_similarity_map` | SVG per model and pair | Residue representation and residue metric |
 | `model_agreement` | SVG | Available cross-model matrix Spearman result |
 | `model_matrix_small_multiples` | SVG per model | Cross-model relationship matrices |
 | `consensus_heatmap` | SVG | `consensus_rank` method |
@@ -1065,8 +1075,9 @@ Supported names and requirements:
 | `dendrogram` | HTML | Pairwise matrix plus `visual` extra |
 
 Dependency-light plots are SVG. PCoA, UMAP, and dendrogram use optional
-scientific/Plotly dependencies. UMAP is exploratory and can visually exaggerate
-gaps; use quantitative matrices for conclusions.
+scientific/Plotly dependencies. Their HTML files load Plotly JavaScript from
+a CDN, so opening them requires network access. UMAP is exploratory and can
+visually exaggerate gaps; use quantitative matrices for conclusions.
 
 The renderer returns artifact descriptors containing the filename, byte size,
 SHA-256 checksum, and media type. Rendering problems are recorded in
@@ -1096,7 +1107,7 @@ imported = build_imported_space(
         {
             "method": "mean",
             "layer": 33,
-            "normalization": "l2",
+            "normalization": "none",
             "embeddings": [
                 {"sequence_id": "a", "values": [0.1, 0.2, -0.3]},
                 {"sequence_id": "b", "values": [0.4, -0.1, 0.2]},
@@ -1106,6 +1117,9 @@ imported = build_imported_space(
     ],
 )
 ```
+
+The vectors above are synthetic three-dimensional examples, not ESM output.
+Replace the values and source metadata with those from your own run.
 
 Supported imported methods are `mean`, `max`, `native`, and `residue`.
 Supported normalization declarations are:
@@ -1214,7 +1228,28 @@ order.
 ## Embedding diagnostics
 
 Diagnostics consume successful model outputs from `embed()`, `compare()`, an
-import, or a transformation:
+import, or a transformation. The following setup creates a small source result
+for this section and the mean-centering and annotation examples below:
+
+```python
+from plms_framework import Pipeline
+from plms_framework.serialization import request_from_dict
+
+analysis_source = Pipeline().embed(
+    request_from_dict(
+        {
+            "models": ["reference"],
+            "sequences": [
+                {"id": "a", "sequence": "MKTAYIAK"},
+                {"id": "b", "sequence": "MKTAYVAK"},
+                {"id": "c", "sequence": "GGGGGGGG"},
+            ],
+            "execution": {"allow_partial": False},
+        },
+        compare=False,
+    )
+)
+```
 
 ```python
 from plms_framework import DiagnosticSpec
@@ -1222,8 +1257,8 @@ from plms_framework.diagnostics import diagnose_embeddings
 from plms_framework.models import RepresentationMethod
 
 diagnostics = diagnose_embeddings(
-    result["models"],
-    result["sequence_order"],
+    analysis_source["models"],
+    analysis_source["sequence_order"],
     DiagnosticSpec(
         representation=RepresentationMethod.MEAN,
         layer=None,
@@ -1247,9 +1282,11 @@ Supported representations are `mean`, `max`, and `native`. Options:
 | `max_exact_hubness_sequences` | 2,000 | Above this, hubness is reported unavailable |
 
 Results cover norms, zero and duplicate vectors, per-dimension means and
-variances, participation ratio, raw and mean-centered average cosine,
-anisotropy, cosine-distance concentration, and exact hubness. These describe
-geometry; they do not establish biological quality.
+variances, a variance-based participation ratio, raw and mean-centered average
+cosine, anisotropy, cosine-distance concentration, and exact hubness. These describe
+geometry; they do not establish biological quality. The participation ratio
+is `(sum(v))² / sum(v²)` for per-dimension variances `v`. It does not use
+covariance eigenvalues and should not be read as an intrinsic-dimension estimate.
 
 ## Mean-centering
 
@@ -1262,8 +1299,8 @@ from plms_framework.models import RepresentationMethod, TransformationMethod
 from plms_framework.transformations import transform_embeddings
 
 centered = transform_embeddings(
-    result["models"],
-    result["sequence_order"],
+    analysis_source["models"],
+    analysis_source["sequence_order"],
     TransformationSpec(
         method=TransformationMethod.MEAN_CENTER,
         representation=RepresentationMethod.MEAN,
@@ -1312,8 +1349,8 @@ annotations = [
 ]
 
 analysis = analyze_categorical_annotations(
-    result["models"],
-    result["sequence_order"],
+    analysis_source["models"],
+    analysis_source["sequence_order"],
     annotations,
     AnnotationAnalysisSpec(
         feature="family",
@@ -1327,8 +1364,9 @@ analysis = analyze_categorical_annotations(
 ```
 
 Supported representations are `mean`, `max`, and `native`. Categorical values
-may be strings, integers, or booleans. At least two labeled sequences and two
-classes are required.
+may be strings, integers, or booleans. A null value counts as a missing label
+and follows `missing_policy`. At least two labeled sequences and two classes
+are required. The labels above are synthetic examples of the input format.
 
 Options:
 
@@ -1397,16 +1435,33 @@ from dataclasses import replace
 from plms_framework import Pipeline, default_registry
 from plms_framework.adapters import DeterministicAdapter
 from plms_framework.registry import ModelRegistry
+from plms_framework.serialization import request_from_dict
 
 registry = ModelRegistry()
 reference_manifest = default_registry.manifest("reference")
 
+registry.register(reference_manifest, DeterministicAdapter)
 registry.register(
-    replace(reference_manifest, id="reference-small", aliases=()),
+    replace(reference_manifest, id="reference-copy", aliases=()),
     DeterministicAdapter,
 )
 
 pipeline = Pipeline(registry)
+
+request = request_from_dict(
+    {
+        "models": ["reference", "reference-copy"],
+        "sequences": [
+            {"id": "a", "sequence": "MKTAYIAK"},
+            {"id": "b", "sequence": "MKTAYVAK"},
+            {"id": "c", "sequence": "GGGGGGGG"},
+        ],
+        "cross_model": {"enabled": True},
+        "execution": {"allow_partial": False},
+    },
+    compare=True,
+)
+comparison = pipeline.compare(request)
 ```
 
 Register adapter factories/classes, not already-loaded model objects. This keeps
@@ -1417,8 +1472,8 @@ truncate, or replace residues.
 ## Reproducibility and resource guidance
 
 - Keep the returned model manifest and run provenance with every analysis.
-- Prefer immutable checkpoint revisions. Most registry entries still use an
-  upstream branch name until they receive checkpoint-specific conformance work.
+- Prefer immutable checkpoint revisions. Some registry entries still use
+  `main`; inspect each manifest before relying on reproducible downloads.
 - Record the selected layer, pooling, normalization, device, and precision.
 - Inspect `result["failures"]`; a partial result is not the same as a complete
   multi-model experiment.

@@ -1,4 +1,4 @@
-"""Complete ESM-2, ESM-C, and ProGen2 comparison example with explained output.
+"""Compare ESM-2, ESM-C, and ProGen2 embeddings and explain the results.
 
 Run this example from the repository root after the complete installation:
 
@@ -40,17 +40,17 @@ from plms_framework.visualization import render_requested
 MODEL_IDS = ("esm2-8m", "esmc-300m", "progen2-small")
 JOB_ID = "esm2-esmc-complete-example"
 
-# S1 and S2 are exact duplicates. S3 has three substitutions relative to S1.
-# S4 has the same length but deliberately unrelated, low-complexity composition.
+# S1 and S2 are exact duplicates. S3 has nine substitutions relative to S1.
+# S4 is a shorter composition control with repeated G/P/S motifs and shared fragments.
 SEQUENCES = (
     {
         "id": "reference",
         "sequence": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANNMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANNMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANN",
         "metadata": {"role": "reference", "expected_group": "reference_like"},
         "regions": [
-            {"name": "n_terminal", "start": 1, "end": 12},
-            {"name": "middle", "start": 13, "end": 24},
-            {"name": "c_terminal", "start": 25, "end": 36},
+            {"name": "segment_1", "start": 1, "end": 12},
+            {"name": "segment_2", "start": 13, "end": 24},
+            {"name": "segment_3", "start": 25, "end": 36},
         ],
     },
     {
@@ -58,29 +58,29 @@ SEQUENCES = (
         "sequence": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANNMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANNMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQANN",
         "metadata": {"role": "exact duplicate", "expected_group": "reference_like"},
         "regions": [
-            {"name": "n_terminal", "start": 1, "end": 12},
-            {"name": "middle", "start": 13, "end": 24},
-            {"name": "c_terminal", "start": 25, "end": 36},
+            {"name": "segment_1", "start": 1, "end": 12},
+            {"name": "segment_2", "start": 13, "end": 24},
+            {"name": "segment_3", "start": 25, "end": 36},
         ],
     },
     {
         "id": "similar_variant",
         "sequence": "MKTAYIAKQRQVSFVKSHFTRQLEERLGLVEVQANNMKTAYIAKQRQVSFVKSHFTRQLEERLGLVEVQANNMKTAYIAKQRQVSFVKSHFTRQLEERLGLVEVQANN",
-        "metadata": {"role": "three substitutions", "expected_group": "reference_like"},
+        "metadata": {"role": "nine substitutions", "expected_group": "reference_like"},
         "regions": [
-            {"name": "n_terminal", "start": 1, "end": 12},
-            {"name": "middle", "start": 13, "end": 24},
-            {"name": "c_terminal", "start": 25, "end": 36},
+            {"name": "segment_1", "start": 1, "end": 12},
+            {"name": "segment_2", "start": 13, "end": 24},
+            {"name": "segment_3", "start": 25, "end": 36},
         ],
     },
     {
         "id": "different_control",
         "sequence": "GPGSGPGSGPGSGPGSGMKTAYIAKQRQVSPGSGPGSGPGSGPGSGPGSTAYIAKQRQVSAAANMMM",
-        "metadata": {"role": "unrelated control", "expected_group": "composition_control"},
+        "metadata": {"role": "shorter composition control", "expected_group": "composition_control"},
         "regions": [
-            {"name": "n_terminal", "start": 1, "end": 12},
-            {"name": "middle", "start": 13, "end": 24},
-            {"name": "c_terminal", "start": 25, "end": 36},
+            {"name": "segment_1", "start": 1, "end": 12},
+            {"name": "segment_2", "start": 13, "end": 24},
+            {"name": "segment_3", "start": 25, "end": 36},
         ],
     },
 )
@@ -221,7 +221,7 @@ def print_matrix(
     *,
     explanation: str,
 ) -> None:
-    """Print a compact numeric matrix while retaining the authoritative row order."""
+    """Print a compact numeric matrix in the supplied row order."""
     print(f"\n{title}")
     print(f"  Meaning: {explanation}.")
     width = max(10, *(len(name) + 1 for name in row_names))
@@ -234,7 +234,7 @@ def print_matrix(
 def print_sequence_design(sequence_order: list[str]) -> None:
     labels = short_labels(sequence_order)
     section("1. Experimental design")
-    print("The four inputs are a deliberate sanity check for every score:")
+    print("The four synthetic inputs illustrate how the scores behave:")
     for item in SEQUENCES:
         print(
             f"  {labels[item['id']]} = {item['id']:<18} length={len(item['sequence'])}  "
@@ -243,10 +243,10 @@ def print_sequence_design(sequence_order: list[str]) -> None:
         print(f"       {item['sequence']}")
     print("\nExpected pattern:")
     print("  - S1 and S2 should be identical in deterministic evaluation mode.")
-    print("  - S3 differs from S1/S2 at exactly three positions and should remain close.")
-    print("  - S4 has unrelated, low-complexity composition and should usually be far away.")
-    print("  - All sequences have equal length, so length_ratio alone cannot distinguish them.")
-    print("  - Regions are residues 1-12, 13-24, and 25-36; windows use size 12, step 6.")
+    print("  - S3 differs from S1/S2 at nine positions; inspect how each score changes.")
+    print("  - S4 is a shorter composition control with some shared sequence fragments.")
+    print("  - S1/S2/S3 have 108 residues; S4 has 67, so length may affect comparisons.")
+    print("  - Regions cover residues 1-12, 13-24, and 25-36 only; windows use size 12, step 6.")
 
 
 def print_estimate(estimate: dict) -> None:
@@ -276,7 +276,7 @@ def check_backends(pipeline: Pipeline) -> bool:
         adapter = pipeline.registry.adapter(model_id)
         availability = adapter.availability()
         manifest = adapter.manifest
-        state = "ready" if availability.available else "NOT READY"
+        state = "dependencies found" if availability.available else "dependencies unavailable"
         print(
             f"  {model_id}: {state}; backend={manifest.backend}; artifact={manifest.artifact}; "
             f"dimension={manifest.embedding_dimension}"
@@ -288,8 +288,7 @@ def check_backends(pipeline: Pipeline) -> bool:
     if not ready:
         print("\nThe complete example needs all three models. Install with:")
         print("  python3.12 -m pip install -r requirements.txt")
-        print("Then rerun this file under Python 3.12+. No one-model fallback is used because")
-        print("that would make the requested cross-model results unavailable.")
+        print("Then rerun this file under Python 3.12+. This example requires all three models.")
     return ready
 
 
@@ -326,8 +325,8 @@ def print_model_outputs(result: dict) -> None:
         print("  residue: one vector per amino acid; each row is L2-normalized here.")
         print("  region_mean/window_mean: local pooled vectors with recorded coordinates.")
     print(
-        "\nThe optional native representation is not requested: neither selected model "
-        "advertises a backend-native pooled vector. Raw coordinates are never compared "
+        "\nThe optional native representation is not requested: none of the selected models "
+        "advertise a backend-native pooled vector. Raw coordinates are never compared "
         "directly between ESM-2 and ESM-C because their dimensions and learned spaces differ."
     )
 
@@ -337,7 +336,7 @@ def print_sequence_baselines(result: dict) -> None:
     order = result["sequence_order"]
     labels = short_labels(order)
     compact = [labels[item] for item in order]
-    print("These matrices use amino-acid strings only; neither neural model affects them.")
+    print("These matrices use amino-acid strings only; the neural models do not affect them.")
     for metric, matrix in result["sequence_baselines"].items():
         print_matrix(
             metric,
@@ -347,8 +346,8 @@ def print_sequence_baselines(result: dict) -> None:
         )
     print(
         "\nSanity check: S1/S2 should score 1 for all similarities. S1/S3 should be "
-        "strongly similar. The equal length ratio of S4 demonstrates why length is only a "
-        "baseline and not evidence of sequence or functional relatedness."
+        "similar in sequence. S4 has a length ratio of 67/108 to the other inputs; "
+        "length and composition both differ, so it is not a length-matched control."
     )
 
 
@@ -359,7 +358,7 @@ def print_pooled_matrices(result: dict) -> None:
     compact = [labels[item] for item in order]
     print(
         "Every matrix is within one model and one representation space. Mean and max pooling "
-        "are shown separately; do not compare raw vector coordinates across the two PLMs."
+        "are shown separately; do not compare raw vector coordinates across the three PLMs."
     )
     for model_id, output in result["models"].items():
         print(f"\n--- {model_id} ---")
@@ -415,7 +414,7 @@ def print_cross_model_results(result: dict) -> None:
     explanations = {
         "matrix_spearman": "rank correlation between the models' six off-diagonal pair scores",
         "matrix_pearson": "linear correlation between the models' six pair scores",
-        "linear_cka": "centered-kernel alignment; valid even when embedding dimensions differ",
+        "linear_cka": "centered-kernel alignment; supports different embedding dimensions",
     }
     for method in ("matrix_spearman", "matrix_pearson", "linear_cka"):
         item = comparisons[method]
@@ -471,10 +470,11 @@ def print_cross_model_results(result: dict) -> None:
         print(f"\n{method}: {meaning}.")
         for sequence_id, agreement in item["by_sequence"].items():
             if agreement.get("available"):
-                off_diagonal = agreement["values"][0][1]
-                print(
-                    f"  {sequence_id:<18} residues={agreement['residue_count']:<3} "
-                    f"ESM-2 vs ESM-C={number(off_diagonal)}"
+                print_matrix(
+                    f"{method}: {sequence_id} ({agreement['residue_count']} residues)",
+                    agreement["values"],
+                    agreement["model_order"],
+                    explanation=meaning,
                 )
             else:
                 print(f"  {sequence_id}: unavailable — {agreement['reason']}")
@@ -497,8 +497,8 @@ def run_and_print_diagnostics(result: dict) -> dict:
         ),
     )
     print(
-        "Diagnostics describe geometry, not biological quality. With only four deliberately "
-        "chosen proteins, treat anisotropy, effective dimension, and hubness as demonstrations."
+        "Diagnostics describe geometry, not biological quality. With only four synthetic "
+        "sequences, treat anisotropy, variance participation ratio, and hubness as demonstrations."
     )
     for model_id, item in diagnostics["models"].items():
         if not item.get("available"):
@@ -519,7 +519,7 @@ def run_and_print_diagnostics(result: dict) -> dict:
         hubness = item["hubness"]
         print(
             f"  hubness k={hubness.get('k')}; "
-            f"Robin-Hood index={number(hubness.get('robin_hood_index'))}; "
+            f"Robin Hood index={number(hubness.get('robin_hood_index'))}; "
             f"occurrence range={hubness.get('occurrence_min')}..{hubness.get('occurrence_max')}"
         )
         for warning in item["warnings"]:
@@ -529,7 +529,7 @@ def run_and_print_diagnostics(result: dict) -> dict:
 
 
 def run_and_print_transformation(result: dict) -> dict:
-    section("10. Immutable mean-centering transformation")
+    section("10. Mean-centering")
     centered = transform_embeddings(
         result["models"],
         result["sequence_order"],
@@ -545,7 +545,7 @@ def run_and_print_transformation(result: dict) -> dict:
     )
     print(
         "A mean fitted on S1, S3, and S4 is subtracted without modifying the source result. "
-        "S2 is deliberately held out to demonstrate an explicit fit subset."
+        "S2 is excluded from fitting, but duplicates S1; this is not an independent test set."
     )
     for source, derived in centered["transformation"]["source_model_map"].items():
         parameters = centered["transformation_parameters"][derived]
@@ -559,7 +559,7 @@ def run_and_print_transformation(result: dict) -> dict:
             f"{number(after['anisotropy']['average_pairwise_cosine'])}"
         )
     print(
-        "The checksum and fit IDs make the derived space reproducible. In a real benchmark, "
+        "The recorded parameters and fit IDs let you repeat this transformation. In a benchmark, "
         "fit centering parameters on training/reference proteins only."
     )
     return centered
@@ -703,13 +703,13 @@ def main() -> int:
         print("\nThe strict comparison stopped with a structured framework error:")
         print(json.dumps(exc.as_dict(), indent=2, sort_keys=True))
         print(
-            "Resolve that model/dependency/device problem and rerun. Strict mode is intentional "
-            "so incomplete output is never presented as a three-model comparison."
+            "Resolve the model, dependency, or device problem and rerun. "
+            "This example requires all three models to complete."
         )
         return 1
 
     print(
-        f"Completed in {result['provenance']['duration_seconds']:.3f} seconds; "
+        f"Embedding time: {result['provenance']['duration_seconds']:.3f} seconds; "
         f"successful models={list(result['models'])}; failures={len(result['failures'])}."
     )
     print_model_outputs(result)
@@ -724,7 +724,7 @@ def main() -> int:
 
     section("Finished")
     print(
-        "The exact duplicate, related variant, and unrelated control should now be visible in "
+        "The exact duplicate, substitution variant, and composition control are included in "
         "sequence, pooled-embedding, residue, cross-model, and visualization outputs. Review "
         "comparison.json for the complete machine-readable result and provenance."
     )

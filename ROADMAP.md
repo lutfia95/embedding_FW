@@ -1,26 +1,31 @@
-# PLMs Framework — Master TODO
+# PLMs Framework roadmap
 
-This is the ordered implementation backlog for the PLM comparison platform.
+This backlog tracks implemented features and planned work for PLMs Framework.
+Sections group related work; priorities indicate the intended implementation
+order.
 
 Checkbox meanings:
 
 - `[ ]` not started
 - `[~]` in progress
-- `[x]` implemented and verified
+- `[x]` implemented with repository tests; real-checkpoint validation is
+  tracked separately
 - `[!]` blocked by an explicit external dependency or scientific decision
 
 Priorities are `P0` (foundational), `P1` (high value), `P2` (important), and
-`P3` (later expansion). An item is not complete until its implementation,
-validation, documentation, examples, and tests agree.
+`P3` (later expansion). Completed items should have matching code,
+documentation, examples, and tests.
 
 ## 0. Existing foundation
 
 - [x] Capability-driven model registry
 - [x] Deterministic reference adapter
 - [x] Hugging Face encoder adapter
-- [x] Dedicated ESM-C adapter surface
+- [x] Dedicated ESM-C adapter
 - [x] ESM-2 8M real-checkpoint conformance test
-- [x] Mean, max, residue, region-mean, window-mean, and native representations
+- [x] Mean, max, residue, region-mean, and window-mean representations
+- [x] Native representation schema and import support; no default model
+  currently advertises native output
 - [x] L2 normalization with original norms
 - [x] Vector similarity and distance metrics
 - [x] Sequence identity, k-mer, and BLOSUM controls
@@ -66,7 +71,8 @@ validation, documentation, examples, and tests agree.
 - [x] Per-dimension mean and variance summary
 - [x] Average random-pair cosine diagnostic
 - [x] Anisotropy score with dimensionality-aware interpretation
-- [x] Participation ratio/effective dimensionality
+- [x] Participation ratio of per-dimension variances
+- [ ] Covariance-spectrum participation ratio/effective dimensionality
 - [ ] Singular-value spectrum and explained variance
 - [x] Distance-concentration diagnostics
 - [x] Hubness k-occurrence distribution
@@ -193,8 +199,11 @@ validation, documentation, examples, and tests agree.
 - [ ] Validate Ankh Base
 - [ ] Validate Ankh Large
 - [ ] Add ProstT5
-- [ ] Add ESM-1b
-- [ ] Add ESM-1v ensemble variants
+- [x] Register ESM-1b and five ESM-1v checkpoints
+- [ ] Validate ESM-1b and ESM-1v on real checkpoints
+- [ ] Add ESM-1v ensemble scoring
+- [x] Register ProtBert, ProtT5 XL BFD, ProtAlbert, ProtXLNet, and ProGen2 small/medium
+- [ ] Validate those added ProtTrans and ProGen2 checkpoints
 - [ ] Add ESM MSA Transformer capability class
 - [ ] Add ESM-IF1 inverse-folding capability class
 - [ ] Add ESM-3 multimodal capability class
@@ -207,7 +216,8 @@ validation, documentation, examples, and tests agree.
 
 ## 9. Long-sequence execution — P1
 
-- [ ] Model-aware native length resolution
+- [~] Model-aware native length limits (declared manifest limits enforced;
+  automatic resolution for models without declared limits pending)
 - [ ] Explicit overlapping-window policy
 - [ ] Configurable window size and overlap
 - [ ] Deterministic left-to-right window plan
@@ -318,7 +328,8 @@ validation, documentation, examples, and tests agree.
 - [ ] Native zero-shot track
 - [ ] Native best-practice track
 - [ ] Learned-pooling track reported separately
-- [ ] Efficiency/cost track
+- [~] Efficiency/cost track (repeated embedding timing and storage estimates
+  implemented; hardware utilization and cost reporting pending)
 - [ ] Remote-homology benchmark
 - [ ] Protein-family retrieval benchmark
 - [ ] Function benchmark
@@ -418,7 +429,7 @@ validation, documentation, examples, and tests agree.
 - [ ] Record deterministic-algorithm settings
 - [ ] Record every random seed
 - [ ] Record input dataset manifest checksum
-- [ ] Record transformation parameters
+- [x] Record mean-centering transformation parameters
 - [ ] Record cache source and integrity result
 - [ ] Replay command/API payload artifact
 - [ ] Verify a completed run against its manifest
@@ -433,17 +444,21 @@ validation, documentation, examples, and tests agree.
 - [ ] API schema snapshot tests
 - [ ] Artifact schema tests
 - [ ] Large-input resource-limit tests
-- [ ] Concurrency and atomicity tests
+- [~] Concurrency and atomicity tests (pair-worker, streaming, and artifact
+  tests implemented; crash recovery and cross-process coverage pending)
 - [ ] Cache corruption tests
 - [ ] Fuzz FASTA and import parsers
-- [ ] Security regression tests
+- [~] Security regression tests (artifact path traversal and SVG escaping
+  covered; broader API and import coverage pending)
 - [ ] Performance regression benchmarks
 - [ ] Memory regression benchmarks
-- [ ] Test supported Python versions in CI
-- [ ] Test CPU installation in CI
+- [x] Test core and API workflows on Python 3.11 and 3.12 in CI
+- [x] Test core and API CPU installation in CI
+- [ ] Test optional neural-model and visualization installations in CI
 - [ ] Optional GPU CI tier
 - [ ] Documentation code-block tests
-- [ ] Example request smoke tests
+- [~] Example request smoke tests (CLI, two-sequence scorer, and noisy FASTA
+  workflows covered; full documentation examples pending)
 - [ ] Mutation testing for scientific validation paths
 
 ## 21. Documentation and community — P2
@@ -485,13 +500,12 @@ validation, documentation, examples, and tests agree.
 
 ## Immediate execution order
 
-1. Finish strict JSON external-space import and connect it to cross-comparison.
-2. Add external-space examples and complete validation tests.
-3. Implement norm, anisotropy, participation-ratio, and hubness diagnostics.
-4. Add explicit mean-centering with before/after diagnostics.
-5. Add typed annotations and KNN label-consistency analysis.
-6. Add sensitivity over k and class-imbalance-aware summaries.
-7. Add bootstrap confidence intervals and protein-level permutation tests.
-8. Add content-addressed embedding caching.
-9. Add adapter conformance CLI and validate real adapters one by one.
-10. Add safe long-sequence overlap reconstruction.
+JSON import and cross-comparison, geometry diagnostics, mean-centering, and
+categorical KNN analysis are implemented. Remaining steps are:
+
+1. Complete import byte limits and expand format and validation coverage.
+2. Add sensitivity over k and class-imbalance-aware summaries.
+3. Add bootstrap confidence intervals and protein-level permutation tests.
+4. Add content-addressed embedding caching.
+5. Add the adapter conformance CLI and validate real adapters one by one.
+6. Add long-sequence inference with overlap reconstruction.

@@ -18,12 +18,17 @@ downloading a checkpoint.
 | Run the full Python demonstration | `python examples/python_ex.py` | See [demonstration flags](#python-demonstration-flags); requires the `all` runtime profile and checkpoints. |
 | Start the API | `plms-framework serve` | See [server flags](#server-flags) and [API endpoints](../README.md#api-endpoints). |
 
-The CLI request JSON files in [`examples/`](../examples) cover embedding,
-comparison, cross-model analysis, imported spaces, diagnostics, and
-mean-centering. For every JSON request field and the Python equivalents, use
-the [Python usage guide](PYTHON_USAGE.md#complete-request-option-reference).
-The latter operations require a prior job or imported embedding space, so their
-placeholder job IDs must be replaced before running them through the API.
+The JSON files in [`examples/`](../examples) include CLI and API requests.
+`embed.json`, `compare.json`, and `cross_model_*.json` can be passed to the CLI
+commands above. `import_space.json`, `diagnostics.json`,
+`transform_mean_center.json`, and `annotation_analysis.json` are API payloads
+for their corresponding [endpoints](../README.md#api-endpoints); the CLI does
+not expose those operations. Requests that refer to a source job need a
+successful job ID from the running API. Replace their placeholder IDs before
+submitting them. The import payload can be submitted directly.
+
+For embedding and comparison fields and the Python equivalents, see the
+[Python usage guide](PYTHON_USAGE.md#complete-request-option-reference).
 
 ## Two-sequence flags
 
@@ -57,6 +62,9 @@ default so it works without model downloads.
 to `python_ex_output/` by default. It covers representations, comparison,
 cross-model methods, diagnostics, transformations, annotation analysis, and
 visualizations. It requires installed model backends and checkpoint access.
+Its synthetic inputs include a duplicate, a variant with nine substitutions,
+and a shorter composition control; their labels are examples, not biological
+annotations.
 
 | Flag | Meaning | Default |
 |---|---|---|
@@ -88,7 +96,7 @@ The [CI workflow](../.github/workflows/ci.yml) runs Ruff, the Python test suite,
 smoke checks for the CLI, pair example, and both noisy analyser output modes on
 Python 3.11 and 3.12. It uses the deterministic adapter and downloads no model
 checkpoints. The [Docs workflow](../.github/workflows/docs.yml) checks local
-Markdown links, section anchors, and JSON examples. The
+Markdown links, section references, and JSON syntax. The
 [model check workflow](../.github/workflows/model-check.yml) is manual because it
 downloads the ESM-2 8M checkpoint; it runs the conformance test and pair example.
 

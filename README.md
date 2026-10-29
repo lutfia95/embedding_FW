@@ -5,37 +5,37 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-D22128)](LICENSE)
 
-PLMs Framework is an API and Python library for generating, comparing,
-benchmarking, and visualizing protein language model representations. A model
-registry and adapter interface provide a consistent workflow across differences
-in architecture, tokenization, sequence length, representation dimension,
-licensing, and hardware requirements.
+PLMs Framework is a Python library and HTTP API for generating, comparing,
+and visualizing protein language model (PLM) embeddings. It also provides
+embedding diagnostics and an inference timing benchmark. A shared model registry
+and adapter interface handle differences in tokenization, sequence limits,
+embedding dimensions, and backend requirements.
 
 For a quick two-protein comparison, see the
 [runnable example](examples/test_two_seqs.py). For reference-to-noisy FASTA
 scoring, see the [analyser guide](doc/NOISY_SEQUENCE_ANALYSER.md). The
-[workflow guide](doc/WORKFLOWS.md) connects each entry point to its flags.
+[workflow guide](doc/WORKFLOWS.md) lists commands and their options.
 
 ## Why this framework exists
 
-PLMs commonly expose contextual vectors for every amino acid. Turning those
-vectors into a trustworthy protein comparison is not just a call to
-`model.forward()`:
+PLMs commonly return a contextual vector for every amino acid. Comparing
+proteins with these vectors requires several choices beyond running the model:
 
 - Models use different tokenizers and boundary tokens.
 - Padding and special tokens must not leak into protein pooling.
 - Long sequences must never be silently truncated.
 - Some models have a meaningful native sequence representation; others do not.
 - Raw vectors from different models do **not** occupy a shared coordinate system.
-- An attractive UMAP plot does not demonstrate biological performance.
+- UMAP plots need quantitative checks and biological validation.
 - Model aliases, revisions, precision, pooling, and preprocessing must be retained
   to reproduce a result.
 
-Each choice is recorded in the request, result, or provenance manifest.
+Requests specify these choices; results and provenance record the model and
+execution details currently available. See [Provenance](#provenance) for limits.
 
-## Scientific contract
+## Comparison principles
 
-The framework follows five central rules:
+The framework uses these conventions:
 
 1. **Mean pooling is the portable default.** It averages valid residue vectors,
    excluding padding and boundary tokens.
@@ -44,8 +44,8 @@ The framework follows five central rules:
 3. **Raw vectors are compared only within the same model and representation.**
    ESM-2 and ProtT5 coordinates cannot be compared directly.
 4. **Models are compared through relationships.** Pairwise matrices, rankings,
-   neighbor overlap, biological tasks, and representational-similarity methods
-   are valid cross-model objects.
+   neighbor overlap, and representational-similarity methods compare models
+   without assuming that their embedding coordinates match.
 5. **Execution conditions are reported.** Truncation policy, unavailable
    checkpoints, approximation, partial failures, normalization, and adapter
    limitations appear in structured output.
@@ -102,6 +102,7 @@ option tables and typed examples, see
 - Optional L2 normalization with original norms retained
 - Cosine similarity and distance
 - Angular, correlation, and Euclidean distance
+- Sequence length ratio
 - Global sequence identity
 - 3-mer Jaccard similarity
 - Normalized global and local BLOSUM62 scores
@@ -115,10 +116,10 @@ option tables and typed examples, see
 - Single-protein residue CKA and representational-similarity analysis (RSA)
 - Cross-comparison of completed jobs without rerunning PLMs
 - Strict JSON import of precomputed pooled or residue embedding spaces
-- Norm, duplicate, anisotropy, effective-dimension, distance-concentration, and
+- Norm, duplicate, anisotropy, per-dimension variance, distance-concentration, and
   hubness diagnostics for pooled embedding spaces
-- Immutable mean-centering jobs with explicit fit subsets, parameter checksums,
-  and before/after diagnostics
+- Mean-centering jobs that preserve source vectors, with explicit fit subsets,
+  parameter checksums, and before/after diagnostics
 - Categorical annotation analysis with KNN consistency, chance adjustment,
   per-class retrieval summaries, and class-mixing matrices
 - Exact all-to-all safety threshold
@@ -132,7 +133,9 @@ option tables and typed examples, see
 
 ### Current limitations
 
-- Immutable upstream revision resolution after checkpoint download
+The following features are not yet implemented:
+
+- Immutable revision resolution and checkpoint checksums for every backend
 - Content-addressed embedding cache
 - Chunked binary storage for very large residue arrays
 - Approximate nearest-neighbor execution for large collections
@@ -142,10 +145,12 @@ option tables and typed examples, see
 - Full conformance runs for every real checkpoint and hardware/precision pair
 - MSA, structure-token, multimodal, inverse-folding, and antibody adapters
 
-A registry entry identifies an available adapter definition. The
-`conformance` field records whether its numerical behavior has been validated.
+A registry entry identifies a registered adapter and checkpoint. It does not
+guarantee that the model can load locally. The `availability` field reports
+local backend checks; `conformance` describes the validation recorded for that
+checkpoint.
 
-## Initial model registry
+## Model registry
 
 | Framework ID | Family | Upstream artifact | Backend | Status |
 |---|---|---|---|---|
@@ -200,8 +205,8 @@ python -m pip install -r requirements.txt
 This installs the API, Hugging Face, ESM-C, and advanced-visualization
 dependencies. Model checkpoints are still downloaded only when a real model is
 first loaded. The dependency declarations live in `pyproject.toml`; the
-requirements file deliberately points to its `all` installation profile so the
-two files cannot drift apart.
+requirements file selects the `all` installation profile to avoid duplicating
+those declarations.
 
 ### Selective and development installation
 
@@ -236,7 +241,7 @@ ESM-C uses the maintained Biohub `esm` backend and currently requires Python
 python -m pip install -e '.[esmc]'
 ```
 
-It is intentionally separate from the generic Hugging Face adapter. See the
+It uses a separate adapter from the Hugging Face models. See the
 [Python guide](doc/PYTHON_USAGE.md#esm-c-setup-and-troubleshooting) for a strict
 smoke test, supported devices/dtypes, and common failure messages.
 
@@ -507,7 +512,7 @@ gap-aware unbalanced method planned for later.
 | `clustered_heatmap` | SVG | Deterministic average-linkage ordering |
 | `distance_distribution` | SVG | Upper-triangle score distribution |
 | `nearest_neighbor_graph` | SVG | Top-3 exploratory graph |
-| `residue_similarity_map` | SVG per pair | Requires residue comparison data |
+| `residue_similarity_map` | SVG per model and pair | Requires residue comparison data |
 | `model_agreement` | SVG | Spearman agreement across models |
 | `model_matrix_small_multiples` | SVG per model | Identically ordered relationship views |
 | `consensus_heatmap` | SVG | Rank-normalized multi-model consensus |
@@ -562,7 +567,7 @@ residue representations:
     {
       "method": "mean",
       "layer": 33,
-      "normalization": "l2",
+      "normalization": "none",
       "embeddings": [
         {"sequence_id": "protein_a", "values": [0.1, 0.2, -0.3]},
         {"sequence_id": "protein_b", "values": [0.4, -0.1, 0.2]},
@@ -572,6 +577,9 @@ residue representations:
   ]
 }
 ```
+
+These three-dimensional vectors are synthetic examples, not ESM model output.
+Replace the values and source metadata with those from your own run.
 
 The complete request is in `examples/import_space.json`. Poll the returned job
 ID through `/v1/jobs/{id}`. The successful import job can then be included in
@@ -586,7 +594,8 @@ requires:
 - A consistent feature dimension within each representation
 - Rectangular residue matrices
 - Numeric, finite values—NaN and infinity are rejected
-- At most 10,000 records, 32,768 features, and 5,000,000 scalar values per job
+- At most 10,000 records per representation, 32,768 features per vector, and
+  5,000,000 scalar values across the import
 - A unique method/layer combination inside one imported space
 
 `normalization` is a declaration about the supplied data, not a transformation.
@@ -625,7 +634,9 @@ Current diagnostics include:
 - Vector norm minimum, mean, maximum, and zero-vector count
 - Exact duplicate vectors and affected sequence IDs
 - Per-dimension means and population variances
-- Participation ratio as an effective-dimension diagnostic
+- A variance-based participation ratio: `(sum(v))² / sum(v²)`, where `v`
+  contains the per-dimension variances; this is not a covariance-spectrum
+  estimate of intrinsic dimension
 - Average raw and mean-centered cosine over reproducibly sampled sequence pairs
 - An anisotropy score defined as average cosine divided by `1/sqrt(D)`
 - Sampled cosine-distance concentration statistics
@@ -663,7 +674,8 @@ The fitted mean is calculated independently for each model. Every transformed
 space receives a derived identifier such as `esm2-8m::mean-centered`. The result
 contains:
 
-- The transformed vectors and their original normalization declaration
+- The transformed vectors marked `mean_centered`, with the source
+  normalization retained in each record's metadata
 - The IDs used to fit the mean
 - The fitted mean vector and its SHA-256 checksum
 - Geometry diagnostics before and after transformation
@@ -711,10 +723,10 @@ organized within each model's embedding neighborhoods:
 ```
 
 The analysis currently uses one categorical feature and within-model cosine
-neighbors. Categorical values may be strings, integers, booleans, or null.
-Numerical annotations are accepted by the typed request schema and retained for
-future numerical-feature and confounder analyses; they do not affect the current
-calculation.
+neighbors. Categorical values may be strings, integers, or booleans. A null
+value is treated as a missing label and follows `missing_policy`. Numerical
+annotations are accepted by the typed request schema but are not analyzed or
+copied into the result; keep the original annotations if you need them later.
 
 For every requested valid `k`, each model reports:
 
@@ -842,8 +854,9 @@ is compared to a ProtT5 or ESM-C coordinate.
 
 ### Reusing existing jobs
 
-`POST /v1/cross-compare` accepts one or more successful embedding/comparison job
-IDs containing at least two models in total. All sources must contain identical
+`POST /v1/cross-compare` accepts one or more successful comparison, import, or
+transformation job IDs containing at least two models in total. The synchronous
+`/v1/embed` endpoint does not create a job ID. All sources must contain identical
 sequence IDs in identical order, and a model may occur only once:
 
 ```json
@@ -879,18 +892,20 @@ Cross-model output includes:
 
 ## Long sequences
 
-Silent truncation is forbidden. When a sequence exceeds a model's declared native
-limit, the current behavior is an error naming the model and sequence IDs.
+Sequences are never silently truncated. When a sequence exceeds a model's
+declared native limit, the current behavior is an error naming the model and
+sequence IDs.
 
-Planned explicit alternatives are:
+Choose a model with a suitable declared length limit. For windowed inference,
+the planned steps are:
 
-- Choose a compatible long-context model.
 - Apply named overlapping windows.
 - Merge residue vectors with recorded edge weighting.
 - Mark the result as non-native and warn that global context was lost.
 
-Until that policy is implemented and tested, `on_long_sequence` should remain
-`error`.
+`on_long_sequence="error"` is currently the only supported policy.
+`window_mean` pools an existing residue embedding; it does not extend a model's
+context length.
 
 ## Exact all-to-all scaling
 
@@ -904,8 +919,9 @@ For `N` sequences, each metric contains `N²` entries and evaluates
 | 100,000 | 80 GB | 4,999,950,000 |
 
 The default exact limit is 2,000 sequences and is configurable per request.
-Raising it is an explicit acceptance of compute and storage cost. Approximate
-nearest-neighbor mode is planned but is never substituted silently.
+Raising it increases compute and storage costs. These byte counts describe
+packed float64 arrays; the current Python lists and JSON output use more memory
+and disk space. Approximate nearest-neighbor mode is planned but is never substituted silently.
 
 Residue all-to-all comparison is more expensive: a pair of lengths `L1` and
 `L2` needs an `L1 × L2` similarity matrix. Request it only when biologically
@@ -917,7 +933,8 @@ Each run currently records:
 
 - Framework and schema version
 - Python and platform
-- Start, finish, and duration
+- Embedding start, finish, and duration; comparison metrics run after this
+  interval, so it is not the total comparison time
 - Sequence SHA-256 digests and lengths
 - Execution choices
 - Per-model artifact, requested revision, backend, and adapter version
@@ -926,11 +943,11 @@ Each run currently records:
 - Partial failures
 - Artifact names, sizes, media types, and checksums
 
-The validated ESM-2 8M manifest is pinned to an immutable upstream revision, and
-the Hugging Face adapter records its resolved commit. Other upstream aliases
-currently resolve to their manifest's requested revision. A production
-deployment should pin and checksum each checkpoint before advertising replay
-guarantees for it.
+ESM-2 8M, ESM-1b/1v, several ProtTrans models, and the ProGen2 conversions
+have pinned revisions. Other manifests still request `main`. The Hugging Face
+adapter records the resolved commit when the backend exposes it; the ESM-C
+adapter currently records only the requested revision. To reproduce model
+loading, pin revisions and keep checkpoint checksums alongside the results.
 
 Complete sequence content is not written to ordinary logs. Deployments handling
 unpublished sequences should also control result access, artifact retention,
@@ -939,9 +956,10 @@ backups, and infrastructure logs.
 ## Benchmarking
 
 `/v1/benchmark` currently implements an efficiency track over repeated embedding
-runs and reports timing plus storage estimates. Biological benchmark tracks are
-deliberately not faked: they return `not_configured` until a versioned dataset
-manifest is supplied.
+runs and reports timing plus storage estimates. Biological benchmark tracks
+return `not_configured`; dataset loading and biological evaluation are not yet
+implemented. The endpoint currently has no field for supplying a dataset
+manifest.
 
 The planned tracks are:
 
@@ -964,6 +982,8 @@ splits can leak close homologues and substantially overstate generalization.
 4. Implement lazy `load()` and safe `unload()`.
 5. Validate model-specific sequence length, alphabet, layer, and precision.
 6. Return one `RawEmbedding` per sequence with exactly `L` residue rows.
+   Validate that each retained token corresponds to the expected amino acid;
+   a matching row count alone does not establish correct tokenization.
 7. Return an explicit token-to-residue map.
 8. Add native sequence output only when scientifically justified.
 9. Add reference-output, masking, batch-invariance, and determinism tests.
@@ -1005,9 +1025,9 @@ partial failures, exact limits, atomic artifacts, checksums, path traversal, and
 SVG escaping.
 
 The [CI workflow](.github/workflows/ci.yml) runs lint, tests, and smoke checks
-the CLI, two-sequence example, and noisy FASTA analyser on Python 3.11 and 3.12.
-The [Docs workflow](.github/workflows/docs.yml) checks local links, headings,
-and example JSON files with [`scripts/check_docs.py`](scripts/check_docs.py).
+for the CLI, two-sequence example, and noisy FASTA analyser on Python 3.11 and 3.12.
+The [Docs workflow](.github/workflows/docs.yml) checks local links, section
+references, and example JSON syntax with [`scripts/check_docs.py`](scripts/check_docs.py).
 The [manual model workflow](.github/workflows/model-check.yml) downloads the
 ESM-2 8M checkpoint and runs its conformance test. Other real-model tests remain
 opt-in because they can download large files and require specific devices.
@@ -1019,7 +1039,7 @@ HF_HOME=.model_cache PLMS_RUN_MODEL_TESTS=1 \
   python -m unittest tests.test_real_models -v
 ```
 
-On a checkpoint-capable machine, run the newly registered ESM-1, ProtTrans,
+On a machine with sufficient storage and memory, run the ESM-1, ProtTrans,
 and ProGen2 shape suite with:
 
 ```bash

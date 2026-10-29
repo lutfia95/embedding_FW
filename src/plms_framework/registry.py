@@ -81,7 +81,7 @@ def _hf_manifest(
         architecture=architecture,
         input_modalities=("sequence",),
         alphabet=AA_ALPHABET,
-        ambiguous_residues="Passed to the upstream tokenizer; unsupported tokens cause validation failure",
+        ambiguous_residues="Passed to the upstream tokenizer, which may encode ambiguous residues as unknown",
         tokenizer_convention="One residue token per amino acid plus model-specific boundary tokens",
         max_native_length=max_length,
         num_layers=layers,

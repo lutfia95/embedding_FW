@@ -1,4 +1,4 @@
-"""Universal protein language model representation framework."""
+"""Protein language model embeddings and comparison tools."""
 
 __version__ = "0.1.0"
 

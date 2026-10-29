@@ -32,7 +32,7 @@ def build_imported_space(
     """Validate precomputed embeddings and expose them as one model-like result.
 
     Imported values are structurally validated but are never described as a
-    conformance-tested model output. The returned result deliberately matches
+    conformance-tested model output. The returned result matches
     the model/result contract consumed by cross-model comparisons.
     """
     if not isinstance(space_name, str) or not _SAFE_SPACE_NAME.fullmatch(space_name):

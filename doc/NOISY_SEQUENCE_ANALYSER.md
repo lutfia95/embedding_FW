@@ -38,8 +38,9 @@ completion order; `pair_index` gives their zero-based input order.
 
 ## Input and output
 
-- Records match on the **full FASTA header**. The analyser scans the noisy
-  directory once, without recursion, and accepts `.fa`, `.faa`, `.fas`,
+- Records match on the **full FASTA header**, with leading and trailing
+  whitespace removed. Files are processed in filename order, then record order.
+  The analyser scans the noisy directory once, without recursion, and accepts `.fa`, `.faa`, `.fas`,
   `.fasta`, and `.fsa` files.
 - By default, every reference header is considered. `--header protein_alpha`
   selects one exact header. A bare `--header` has the same effect as omitting it.
@@ -49,8 +50,10 @@ completion order; `pair_index` gives their zero-based input order.
   `noisy_sequence_scores.csv`, plus live per-model CSVs in
   `noisy_sequence_scores.models/`. With `--model-wise`, the default output is
   the `noisy_sequence_scores/` directory.
-- Every model CSV includes sequence scores, 14 embedding scores, a status, and
-  an optional error. Long pairs are marked `skipped_long_sequence` by default.
+- Every model CSV includes five sequence scores, 14 embedding scores (five
+  for each of mean and max pooling, plus four residue scores), a status, and an
+  optional error. These are the same 19 scores returned for one model by the
+  two-sequence scorer. Long pairs are marked `skipped_long_sequence` by default.
   Results already flushed remain readable after a later failure. Rerunning a
   model overwrites its CSV; it does not resume a previous run.
 
@@ -66,11 +69,11 @@ completion order; `pair_index` gives their zero-based input order.
 | `--models MODEL [MODEL ...]` | Framework model IDs | All ESM-1, ESM-2, and ESM-C IDs in the script |
 | `--device {auto,cpu,cuda}` | Inference device | `auto` |
 | `--precision {auto,float32,bfloat16,bf16}` | Inference precision | `auto` |
-| `--workers N` | Concurrent complete-pair workers | CPU count minus one, capped at 8; minimum 1 |
+| `--workers N` | Concurrent complete-pair workers | Available CPUs minus one, capped at 8; minimum 1; respects CPU affinity |
 | `--batch-size N` | Maximum sequences per embedding batch | `4` |
 | `--max-batch-tokens N` | Maximum padded tokens per batch; longer sequences run alone | `2048` |
 | `--torch-threads N` | PyTorch threads per operation | `1` |
-| `--cache-dir DIR` | Disposable checkpoint cache for model-wise runs | Temporary directory |
+| `--cache-dir DIR` | Disposable checkpoint cache in model-wise mode; scratch-directory parent in wide mode | Temporary directory |
 | `--long-sequences {skip,error}` | Record over-limit pairs or stop | `skip` |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | Log detail | `INFO` |
 
@@ -83,7 +86,8 @@ list includes checkpoints too large for a typical laptop.
 
 Each worker embeds one reference/noisy pair, computes the scores, and releases
 the embeddings. Equal sequences in a pair are embedded once. Active and queued
-pairs are bounded to twice the worker count. `--batch-size` above two does not
+pairs are bounded to twice the worker count. FASTA input records are still
+loaded into memory before scoring. `--batch-size` above two does not
 combine unrelated pairs. CPU workers share weights but keep separate mutable
 model state; GPU inference uses a lock to limit concurrent accelerator use.
 
@@ -92,6 +96,8 @@ temporary SQLite database while assembling the final CSV. Model-wise mode
 directs checkpoint downloads to a disposable cache and empties **all contents**
 of that directory after each model, even after a failure. Use a dedicated cache
 directory only. With no `--cache-dir`, a temporary cache is created and removed.
+In wide mode, checkpoint downloads use the normal backend cache;
+`--cache-dir` only provides a parent for temporary scratch directories.
 
 Pairs above a model's native length are skipped unless `--long-sequences error`
 is selected. Sequences are never silently truncated. If memory is tight, reduce

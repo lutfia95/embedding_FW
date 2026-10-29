@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import importlib.util
 import math
@@ -149,18 +150,22 @@ def render_requested(result: dict, store: ArtifactStore, job_id: str) -> list[di
                         )
             elif kind == "residue_similarity_map":
                 saved = False
-                for output in result.get("models", {}).values():
+                for model_id, output in result.get("models", {}).items():
                     for pair, pair_result in output.get("residue_pairs", {}).items():
                         if "similarity_matrix" in pair_result:
+                            safe_model = _artifact_slug(model_id)[:40]
                             safe_pair = _artifact_slug(pair.replace("::", "-"))[:80]
+                            identity = hashlib.sha256(
+                                repr((model_id, pair)).encode("utf-8")
+                            ).hexdigest()[:12]
                             artifacts.append(
                                 store.save_text(
                                     job_id,
-                                    f"residue-{safe_pair}.svg",
+                                    f"residue-{safe_model}-{safe_pair}-{identity}.svg",
                                     heatmap_svg(
                                         pair_result["similarity_matrix"],
                                         [],
-                                        f"Residue similarity: {pair}",
+                                        f"{model_id}: residue similarity: {pair}",
                                     ),
                                 )
                             )
@@ -195,14 +200,16 @@ def render_requested(result: dict, store: ArtifactStore, job_id: str) -> list[di
 
 def heatmap_svg(matrix: list[list[float]], labels: list[str], title: str) -> str:
     n = len(matrix)
-    cell = max(4, min(36, 600 // max(1, n)))
+    columns = len(matrix[0]) if matrix else 0
+    cell = max(4, min(36, 600 // max(1, n, columns)))
     margin = 160 if labels and n <= 100 else 40
     size = cell * n
+    plot_width = cell * columns
     values = [value for row in matrix for value in row]
     low, high = min(values), max(values)
     span = high - low or 1.0
     parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size + margin + 20}" height="{size + margin + 40}">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{plot_width + margin + 20}" height="{size + margin + 40}">',
         '<rect width="100%" height="100%" fill="white"/>',
         f'<text x="10" y="20" font-family="sans-serif" font-size="14">{html.escape(title)}</text>',
     ]

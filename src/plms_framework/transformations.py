@@ -28,7 +28,7 @@ def transform_embeddings(
     sequence_order: list[str],
     spec: TransformationSpec,
 ) -> dict[str, Any]:
-    """Create immutable derived embedding spaces from completed model outputs."""
+    """Create derived embedding spaces without modifying the source outputs."""
     if spec.method != TransformationMethod.MEAN_CENTER:
         raise ValidationError(f"Unsupported transformation: {spec.method}")
     if spec.representation not in _VECTOR_METHODS:

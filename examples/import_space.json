@@ -1,7 +1,7 @@
 {
   "space_name": "external-esm-run",
   "source": {
-    "display_name": "External ESM experiment",
+    "display_name": "Synthetic import example; replace with your own embeddings",
     "family": "ESM-2",
     "provider": "example-lab",
     "artifact": "facebook/esm2_t33_650M_UR50D",
@@ -16,7 +16,7 @@
     {
       "method": "mean",
       "layer": 33,
-      "normalization": "l2",
+      "normalization": "none",
       "embeddings": [
         {
           "sequence_id": "protein_a",

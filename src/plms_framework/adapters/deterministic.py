@@ -9,7 +9,7 @@ from .base import ModelAdapter
 class DeterministicAdapter(ModelAdapter):
     """Dependency-free reference adapter for tests, demos, and API validation.
 
-    It is deliberately not presented as a biological PLM.
+    Its vectors are synthetic and carry no biological meaning.
     """
 
     def availability(self) -> Availability:
