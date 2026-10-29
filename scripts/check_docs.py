@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-MARKDOWN_FILES = [ROOT / "README.md", ROOT / "ROADMAP.md", *sorted((ROOT / "doc").glob("*.md"))]
+MARKDOWN_FILES = [ROOT / "README.md", *sorted((ROOT / "doc").glob("*.md"))]
 LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
 

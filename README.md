@@ -16,23 +16,6 @@ For a quick two-protein comparison, see the
 scoring, see the [analyser guide](doc/NOISY_SEQUENCE_ANALYSER.md). The
 [workflow guide](doc/WORKFLOWS.md) lists commands and their options.
 
-## Why this framework exists
-
-PLMs commonly return a contextual vector for every amino acid. Comparing
-proteins with these vectors requires several choices beyond running the model:
-
-- Models use different tokenizers and boundary tokens.
-- Padding and special tokens must not leak into protein pooling.
-- Long sequences must never be silently truncated.
-- Some models have a meaningful native sequence representation; others do not.
-- Raw vectors from different models do **not** occupy a shared coordinate system.
-- UMAP plots need quantitative checks and biological validation.
-- Model aliases, revisions, precision, pooling, and preprocessing must be retained
-  to reproduce a result.
-
-Requests specify these choices; results and provenance record the model and
-execution details currently available. See [Provenance](#provenance) for limits.
-
 ## Comparison principles
 
 The framework uses these conventions:
@@ -89,9 +72,7 @@ For direct use from notebooks and Python applications, including complete
 option tables and typed examples, see
 [`doc/PYTHON_USAGE.md`](doc/PYTHON_USAGE.md).
 
-## Implemented features
-
-### Available capabilities
+## Features
 
 - Capability-based registry and stable aliases
 - Explicit model availability and failure reasons
@@ -131,26 +112,12 @@ option tables and typed examples, see
 - FastAPI endpoint definitions and asynchronous comparison jobs
 - Dependency-free deterministic adapter for tests and demonstrations
 
-### Current limitations
-
-The following features are not yet implemented:
-
-- Immutable revision resolution and checkpoint checksums for every backend
-- Content-addressed embedding cache
-- Chunked binary storage for very large residue arrays
-- Approximate nearest-neighbor execution for large collections
-- Unbalanced/gap-aware optimal transport
-- Job cancellation, persistent queue, authentication, quotas, and artifact expiry
-- Versioned biological benchmark datasets and trained downstream heads
-- Full conformance runs for every real checkpoint and hardware/precision pair
-- MSA, structure-token, multimodal, inverse-folding, and antibody adapters
+## Model registry
 
 A registry entry identifies a registered adapter and checkpoint. It does not
 guarantee that the model can load locally. The `availability` field reports
 local backend checks; `conformance` describes the validation recorded for that
 checkpoint.
-
-## Model registry
 
 | Framework ID | Family | Upstream artifact | Backend | Status |
 |---|---|---|---|---|
@@ -381,6 +348,11 @@ exhaust GPU memory.
 
 ## Request format
 
+This example is a comparison request for `POST /v1/compare` or the CLI
+`compare` command. It uses the `hf` extra for ESM-2 and the `visual` extra for
+PCoA. For `POST /v1/embed`, omit the comparison-only `metrics`,
+`visualizations`, and `cross_model` fields.
+
 ```json
 {
   "models": ["esm2-8m"],
@@ -393,7 +365,8 @@ exhaust GPU memory.
     },
     {
       "id": "protein_b",
-      "sequence": "MKTAYIAKQKQISFVKSHFSRQ"
+      "sequence": "MKTAYIAKQKQISFVKSHFSRQ",
+      "regions": [{"name": "n_terminal", "start": 1, "end": 10}]
     }
   ],
   "representations": [
@@ -435,16 +408,17 @@ exhaust GPU memory.
 
 ### Models
 
-Use stable framework IDs. Several models may be selected in one request. A model
-failure is isolated when `allow_partial` is true. A future `all_compatible`
-resolver will require resource filters and an explicit download policy; it must
-never initiate unbounded checkpoint downloads.
+Use registered framework IDs or aliases. Several models may be selected in
+one request. A model failure is isolated when `allow_partial` is true and
+appears in the result's `failures` list. Set `allow_partial` to false to raise
+the first model failure.
 
 ### Sequences
 
-Sequences are uppercased and formatting whitespace is removed. Identifiers must
-be unique. Regions use **1-based inclusive** coordinates. Invalid or unsupported
-amino acids produce a validation error associated with the relevant sequence.
+Sequences are uppercased and formatting whitespace is removed. Identifiers
+are stripped of leading and trailing whitespace and must then be non-empty
+and unique. Regions use **1-based inclusive** coordinates within the sequence.
+Characters outside the model's declared alphabet produce a validation error.
 
 ### Representation methods
 
@@ -457,8 +431,15 @@ amino acids produce a validation error associated with the relevant sequence.
 | `region_mean` | `R × D` | Mean for each submitted region |
 | `window_mean` | `W × D` | Mean for deterministic windows |
 
-For `window_mean`, provide positive `window_size` and optionally `window_step`.
-The last partial window is retained. `normalize` is `l2` or `none`.
+`region_mean` requires at least one region on every sequence, as shown in
+the example. For `window_mean`, provide a positive `window_size` and optionally
+a positive `window_step`; the step defaults to the size. The last partial
+window is retained. These windows pool existing residue embeddings and do not
+extend the model's context length.
+
+`normalize` is `l2` (the default) or `none`; residue embeddings are normalized
+row by row. No default registry model currently supports `native` output.
+Region and window values include coordinates alongside their vectors.
 
 Layer is independent of pooling. Use `model_default` unless a model-specific
 analysis justifies another layer. An integer layer is validated against the
@@ -470,11 +451,13 @@ manifest when layer count is known.
 |---|---|
 | `cosine_similarity` | Primary global similarity; higher is more similar |
 | `cosine_distance` | `1 - cosine`; lower is closer |
-| `angular_distance` | `acos(cosine) / π`; proper angular metric |
+| `angular_distance` | `acos(cosine) / π`; angular separation scaled to `[0, 1]` |
 | `correlation_distance` | Cosine distance after feature centering |
 | `euclidean_distance` | Geometric distance; scale-sensitive without normalization |
 
-For L2-normalized vectors, squared Euclidean distance equals
+Cosine similarity is reported as zero if either vector has zero norm.
+
+For nonzero L2-normalized vectors, squared Euclidean distance equals
 `2 - 2 × cosine_similarity`; these are not independent measurements.
 
 ### Sequence controls
@@ -492,7 +475,8 @@ infer these choices.
 
 ### Residue metrics
 
-Residue metrics require a `residue` representation in the same request:
+Residue metrics require exactly one `residue` method/layer specification in
+the same request:
 
 - `residue_global_alignment`: Needleman-Wunsch over residue cosine scores.
 - `residue_local_alignment`: Smith-Waterman over residue cosine scores.
@@ -522,8 +506,13 @@ gap-aware unbalanced method planned for later.
 | `umap` | Interactive HTML | Exploratory; seed fixed; requires `visual` extra |
 | `dendrogram` | Interactive HTML | Average linkage; requires `visual` extra |
 
-UMAP changes geometry and may exaggerate apparent gaps between clusters. Use the
-matrix heatmap and PCoA when quantitative distances matter.
+Heatmaps, score distributions, neighbor graphs, PCoA, UMAP, and dendrograms
+use the first available model metric matrix, falling back to the first sequence
+baseline if no model matrix is available. Model agreement plots need the
+corresponding enabled cross-model methods.
+
+UMAP is exploratory and can exaggerate apparent gaps between clusters. Inspect
+the original pairwise matrices when interpreting any projection.
 
 ## Single-sequence behavior
 
@@ -546,7 +535,7 @@ proteins or large batches.
 `POST /v1/spaces/import` makes embeddings generated outside this framework
 available to `/v1/cross-compare`. The initial import format is JSON so its
 validation and provenance behavior remain dependency-free and transparent.
-Compressed NPZ, Parquet, and Zarr transports are tracked in `ROADMAP.md`.
+Compressed NPZ, Parquet, and Zarr imports and exports are not yet implemented.
 
 One import job represents one named embedding space and may contain pooled and
 residue representations:
@@ -953,27 +942,6 @@ Complete sequence content is not written to ordinary logs. Deployments handling
 unpublished sequences should also control result access, artifact retention,
 backups, and infrastructure logs.
 
-## Benchmarking
-
-`/v1/benchmark` currently implements an efficiency track over repeated embedding
-runs and reports timing plus storage estimates. Biological benchmark tracks
-return `not_configured`; dataset loading and biological evaluation are not yet
-implemented. The endpoint currently has no field for supplying a dataset
-manifest.
-
-The planned tracks are:
-
-- Frozen standardized representation
-- Native model best practice
-- Native zero-shot capability
-- Efficiency and operational cost
-- Learned pooling, reported separately
-
-Biological evaluation should cover remote homology, function, localization,
-interactions, variant effects, secondary structure, domains, and retrieval. Use
-family-, identity-, temporal-, and pretraining-aware splits. Random protein
-splits can leak close homologues and substantially overstate generalization.
-
 ## Adding a model adapter
 
 1. Create a `ModelManifest` with an immutable upstream revision when possible.
@@ -1006,67 +974,3 @@ class MyAdapter(ModelAdapter):
 
 Register it with a factory rather than a loaded model instance so registry
 discovery remains cheap.
-
-## Testing
-
-The test suite uses `pytest` and needs no model checkpoint. Install the
-development and API dependencies, then run:
-
-```bash
-python -m pip install -e '.[dev,api]'
-python -m ruff check .
-python -m pytest -q
-python scripts/check_docs.py
-```
-
-It currently tests sequence validation, FASTA, regions, pooling, normalization,
-cosine geometry, BLOSUM62, residue alignment, Sinkhorn OT, matrix agreement,
-partial failures, exact limits, atomic artifacts, checksums, path traversal, and
-SVG escaping.
-
-The [CI workflow](.github/workflows/ci.yml) runs lint, tests, and smoke checks
-for the CLI, two-sequence example, and noisy FASTA analyser on Python 3.11 and 3.12.
-The [Docs workflow](.github/workflows/docs.yml) checks local links, section
-references, and example JSON syntax with [`scripts/check_docs.py`](scripts/check_docs.py).
-The [manual model workflow](.github/workflows/model-check.yml) downloads the
-ESM-2 8M checkpoint and runs its conformance test. Other real-model tests remain
-opt-in because they can download large files and require specific devices.
-
-Run the pinned ESM-2 8M conformance test explicitly:
-
-```bash
-HF_HOME=.model_cache PLMS_RUN_MODEL_TESTS=1 \
-  python -m unittest tests.test_real_models -v
-```
-
-On a machine with sufficient storage and memory, run the ESM-1, ProtTrans,
-and ProGen2 shape suite with:
-
-```bash
-HF_HOME=.model_cache PLMS_RUN_EXTENDED_MODEL_TESTS=1 \
-PLMS_TEST_DEVICE=cuda PLMS_TEST_PRECISION=float16 \
-  python -m unittest tests.test_real_models.ExtendedRealModelTests -v
-```
-
-The suite is opt-in because it downloads every listed checkpoint and requires
-substantial cache storage and accelerator memory. Passing it verifies loading,
-token-to-residue masking, and final output shapes; it does not automatically
-promote manifest conformance labels. Set `PLMS_TEST_MODELS` to a comma-separated
-subset of IDs or aliases when the machine should validate checkpoints in
-smaller groups.
-
-## Security notes
-
-- Hugging Face loading defaults to `trust_remote_code=False`. The two ProGen2
-  community conversions are explicit, revision-pinned exceptions and expose
-  `trust_remote_code=true` in their manifests and provenance.
-- Artifact and job names are restricted to safe characters.
-- Artifact publication uses temporary files and atomic replacement.
-- Access tokens are not part of request or provenance schemas.
-- Model failures are returned structurally rather than hidden.
-- Production deployments still need authentication, TLS, request-size limits,
-  persistent job isolation, quotas, and retention controls.
-
-## Development roadmap
-
-The ordered implementation backlog is maintained in [`ROADMAP.md`](ROADMAP.md).
